@@ -353,7 +353,7 @@ func (Cursor) openDB(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (Cursor) queryRows(ctx context.Context, db *sql.DB, dbPath string) ([]cursorLogRow, error) {
+func (g Cursor) queryRows(ctx context.Context, db *sql.DB, dbPath string) ([]cursorLogRow, error) {
 	rows, err := db.QueryContext(ctx, `
 WITH recentCursorRows AS (
 	SELECT key, CAST(value AS TEXT) AS value
@@ -361,6 +361,30 @@ WITH recentCursorRows AS (
 	WHERE key LIKE 'bubbleId:%'
 	ORDER BY rowid DESC
 	LIMIT ?
+),
+contextCursorRows AS MATERIALIZED (
+	SELECT key,
+		CASE
+			WHEN unixepoch(json_extract(value, '$.createdAt')) >= ? THEN value
+			ELSE (
+				SELECT json_group_object(key, CASE
+					WHEN key = 'text' THEN ''
+					WHEN key = 'toolFormerData' AND type = 'object' THEN json_object(
+						'name', json_extract(value, '$.name'),
+						'status', json_extract(value, '$.status'),
+						'params', json_extract(value, '$.params'),
+						'rawArgs', json_extract(value, '$.rawArgs')
+					)
+					WHEN type IN ('array', 'object') THEN json(value)
+					ELSE value
+				END)
+				FROM json_each(recentCursorRows.value)
+				WHERE lower(key) LIKE '%model%'
+				   OR key IN ('createdAt', 'text', 'tokenCount', 'usage', 'toolFormerData', 'codeBlocks')
+			)
+		END AS value
+	FROM recentCursorRows
+	WHERE json_valid(value)
 ),
 filteredCursorRows AS (
 	SELECT
@@ -380,7 +404,7 @@ filteredCursorRows AS (
 				'$.afterContentId'
 			)
 		END AS afterContentId
-	FROM recentCursorRows
+	FROM contextCursorRows
 	WHERE json_valid(value)
 	  AND (
 	    (
@@ -414,7 +438,7 @@ FROM filteredCursorRows AS row
 LEFT JOIN cursorDiskKV AS beforeContent ON beforeContent.key = row.beforeContentId
 LEFT JOIN cursorDiskKV AS afterContent ON afterContent.key = row.afterContentId
 ORDER BY json_extract(row.value, '$.createdAt') ASC;
-`, cursorRecentBubbleRowLimit)
+`, cursorRecentBubbleRowLimit, g.bufferedCutoff().Unix())
 	if err != nil {
 		return nil, fmt.Errorf("failed querying cursor sqlite db %q: %s", dbPath, err)
 	}
