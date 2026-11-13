@@ -273,6 +273,67 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       -
+        name: Resolve semver source branch
+        id: semver-source
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const subject = context.payload.head_commit.message.split("\n")[0]
+            if (/Merge pull request #[0-9]+ from [^/]+\/.+/.test(subject)) {
+              core.setOutput("source_branch", "")
+              core.setOutput("pr_number", "")
+              return
+            }
+
+            const baseBranch = context.ref.replace(/^refs\/heads\//, "")
+            const { data: pullRequests } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              per_page: 100
+            })
+            const candidates = pullRequests.filter((pr) =>
+              pr.merge_commit_sha === context.sha && pr.base.ref === baseBranch
+            )
+            if (candidates.length !== 1) {
+              throw new Error(
+                `Unable to resolve source branch for ${context.sha} on ${baseBranch}: expected exactly one merged pull request, found ${candidates.length}`
+              )
+            }
+
+            core.setOutput("source_branch", candidates[0].head.ref)
+            core.setOutput("pr_number", candidates[0].number)
+      -
+        name: Adapt squash commit for semver-action
+        if: ${{ steps.semver-source.outputs.source_branch != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ steps.semver-source.outputs.pr_number }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          SOURCE_BRANCH: ${{ steps.semver-source.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+
+          parents="$(git rev-list --parents -n 1 "$GITHUB_SHA")"
+          read -r _ parent extra <<< "$parents"
+          if [[ -z "$parent" || -n "$extra" ]]; then
+            echo "Expected exactly one parent for $GITHUB_SHA" >&2
+            exit 1
+          fi
+
+          tree="$(git rev-parse "$GITHUB_SHA^{tree}")"
+          message="Merge pull request #$PR_NUMBER from $REPOSITORY_OWNER/$SOURCE_BRANCH"
+          replacement="$(
+            git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit-tree "$tree" \
+                -p "$parent" \
+                -m "$message"
+          )"
+          git replace "$GITHUB_SHA" "$replacement"
+          git show -s --format=%B "$GITHUB_SHA"
+      -
         name: Calculate semver tag
         id: semver-tag
         uses: alanhamlett/semver-action@a4c3580ce5328d1a34fefa2854d0f2fde8e29536 # master
