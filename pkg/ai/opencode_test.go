@@ -26,6 +26,7 @@ func TestOpenCodeParse_LegacyStorage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	baseDir := filepath.Join(home, ".local", "share", "opencode", "storage")
 	sessionDir := filepath.Join(baseDir, "session", "proj_1")
@@ -170,6 +171,7 @@ func TestOpenCodeParse_SQLiteFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	baseDir := filepath.Join(home, ".local", "share", "opencode")
 	storageDir := filepath.Join(baseDir, "storage")
@@ -285,6 +287,7 @@ func TestOpenCodeParse_SQLiteFallback_UnicodeAndMalformedRows(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	baseDir := filepath.Join(home, ".local", "share", "opencode")
 	dbPath := filepath.Join(baseDir, "opencode.db")
@@ -421,6 +424,7 @@ func TestOpenCodeParse_LegacyStorage_AfterUsesPerMessageTokens(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	baseDir := filepath.Join(home, ".local", "share", "opencode", "storage")
 	sessionDir := filepath.Join(baseDir, "session", "proj_1")
@@ -493,6 +497,7 @@ func TestOpenCodeParse_SQLiteFallback_AfterUsesPerMessageTokens(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	baseDir := filepath.Join(home, ".local", "share", "opencode")
 	dbPath := filepath.Join(baseDir, "opencode.db")
@@ -587,6 +592,7 @@ func TestOpenCodeParse_NoStorageDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	got, err := ai.OpenCode{After: time.Now()}.Parse(ctx)
 	require.NoError(t, err)

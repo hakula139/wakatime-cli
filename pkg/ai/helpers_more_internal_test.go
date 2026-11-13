@@ -1823,6 +1823,7 @@ func TestSQLiteParserErrorBranches(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
+			t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 			dbPath := tt.dbPath(home)
 			require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0700))
@@ -2031,6 +2032,7 @@ func TestOpenCodeAdditionalBranches(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	roots, err := openCodeDataRoots(context.Background())
 	require.NoError(t, err)
