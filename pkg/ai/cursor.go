@@ -382,7 +382,9 @@ contextCursorRows AS MATERIALIZED (
 									WHEN 'object' THEN (
 										SELECT json_group_object(param.key, param.value)
 										FROM json_each(json_extract(field.value, '$.params')) AS param
-										WHERE lower(param.key) IN ('relativeworkspacepath', 'targetfile', 'effectiveuri', 'path')
+										WHERE lower(param.key) IN (
+											'relativeworkspacepath', 'targetfile', 'effectiveuri', 'path'
+										)
 									) || ''
 									WHEN 'null' THEN '{}'
 									ELSE ''
