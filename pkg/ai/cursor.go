@@ -367,20 +367,35 @@ contextCursorRows AS MATERIALIZED (
 		CASE
 			WHEN unixepoch(json_extract(value, '$.createdAt')) >= ? THEN value
 			ELSE (
-				SELECT json_group_object(key, CASE
-					WHEN key = 'text' THEN ''
-					WHEN key = 'toolFormerData' AND type = 'object' THEN json_object(
-						'name', json_extract(value, '$.name'),
-						'status', json_extract(value, '$.status'),
-						'params', json_extract(value, '$.params'),
-						'rawArgs', json_extract(value, '$.rawArgs')
+				SELECT json_group_object(field.key, CASE
+					WHEN field.key = 'text' THEN ''
+					WHEN field.key = 'toolFormerData' AND field.type = 'object' THEN json_object(
+						'name', json_extract(field.value, '$.name'),
+						'status', json_extract(field.value, '$.status'),
+						-- params and rawArgs are JSON-encoded strings, so coerce the filtered objects to text.
+						'params', (
+							SELECT json_group_object(param.key, param.value)
+							FROM json_each(json_extract(field.value, '$.params')) AS param
+							WHERE param.key IN ('relativeWorkspacePath', 'targetFile', 'effectiveUri', 'path')
+						) || '',
+						'rawArgs', (
+							SELECT json_group_object(arg.key, arg.value)
+							FROM json_each(json_extract(field.value, '$.rawArgs')) AS arg
+							WHERE arg.key = 'target_file'
+						) || ''
 					)
-					WHEN type IN ('array', 'object') THEN json(value)
-					ELSE value
+					WHEN field.key = 'codeBlocks' AND field.type = 'array' THEN (
+						SELECT json_group_array(json_object(
+							'uri', json_object('_fsPath', json_extract(block.value, '$.uri._fsPath'))
+						))
+						FROM json_each(field.value) AS block
+					)
+					WHEN field.type IN ('array', 'object') THEN json(field.value)
+					ELSE field.value
 				END)
-				FROM json_each(recentCursorRows.value)
-				WHERE lower(key) LIKE '%model%'
-				   OR key IN ('createdAt', 'text', 'tokenCount', 'usage', 'toolFormerData', 'codeBlocks')
+				FROM json_each(recentCursorRows.value) AS field
+				WHERE lower(field.key) LIKE '%model%'
+				   OR field.key IN ('createdAt', 'text', 'tokenCount', 'usage', 'toolFormerData', 'codeBlocks')
 			)
 		END AS value
 	FROM recentCursorRows

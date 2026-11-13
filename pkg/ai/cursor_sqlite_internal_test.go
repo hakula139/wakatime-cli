@@ -155,3 +155,150 @@ func TestCursorParseProjectsHistoricalRows(t *testing.T) {
 	assert.False(t, *got[1].IsWrite)
 	assert.Equal(t, "composer/2.5 Cursor/1.128.0", got[1].UserAgent)
 }
+
+func TestCursorParseHistoricalToolPayloads(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		historicalFields map[string]any
+		wantProject      string
+	}{
+		{
+			name: "params streamingContent",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status": "completed",
+					"name":   "edit_file_v2",
+					"params": fmt.Sprintf(
+						`{"relativeWorkspacePath":%q,"streamingContent":%q}`,
+						filepath.FromSlash("/home/u/src/params/old.go"),
+						strings.Repeat("s", 2048),
+					),
+				},
+			},
+			wantProject: filepath.FromSlash("/home/u/src/params"),
+		},
+		{
+			name: "rawArgs code_edit",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status": "completed",
+					"name":   "edit_file",
+					"params": `{}`,
+					"rawArgs": fmt.Sprintf(
+						`{"target_file":%q,"code_edit":%q}`,
+						filepath.FromSlash("/home/u/src/raw/old.go"),
+						strings.Repeat("c", 2048),
+					),
+				},
+			},
+			wantProject: filepath.FromSlash("/home/u/src/raw"),
+		},
+		{
+			name: "codeBlocks content",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status": "completed",
+					"name":   "edit_file_v2",
+					"params": `{}`,
+				},
+				"codeBlocks": []any{
+					map[string]any{
+						"uri": map[string]any{
+							"_fsPath": filepath.FromSlash("/home/u/src/blocks/old.go"),
+						},
+						"content": strings.Repeat("b", 2048),
+					},
+				},
+			},
+			wantProject: filepath.FromSlash("/home/u/src/blocks"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			after := time.Date(2026, 10, 12, 10, 0, 30, 0, time.UTC)
+			historicalAt := after.Add(-10 * time.Second)
+			promptAt := after.Add(-2 * time.Second)
+			prompt := "Please explain the recent changes"
+			setupCursorHistoricalToolPayloadFixture(t, tc.historicalFields, historicalAt, promptAt, prompt)
+
+			budget := &aiSQLiteBudget{bytes: aiSQLiteByteLimit - 1024}
+			ctx := context.WithValue(t.Context(), aiSQLiteBudgetKey{}, budget)
+			got, err := (Cursor{
+				After:             after,
+				FallbackUserAgent: "Cursor/1.128.0",
+			}).Parse(ctx)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+
+			assert.LessOrEqual(t, budget.bytes, int64(aiSQLiteByteLimit))
+			assert.Equal(t, "Cursor session", got[0].Entity)
+			assert.Equal(t, "session", got[0].AISession)
+			assert.Equal(t, heartbeat.AppType, got[0].EntityType)
+			assert.Equal(t, heartbeat.AICodingCategory.String(), got[0].Category)
+			assert.Equal(t, float64(promptAt.Unix()), got[0].Time)
+			assert.Equal(t, tc.wantProject, got[0].ProjectPathOverride)
+			assert.Equal(t, len([]rune(prompt)), got[0].AIPromptLength)
+			assert.Zero(t, got[0].AIInputTokens)
+			assert.Zero(t, got[0].AIOutputTokens)
+			require.NotNil(t, got[0].IsWrite)
+			assert.False(t, *got[0].IsWrite)
+			assert.Equal(t, "Cursor/1.128.0", got[0].UserAgent)
+		})
+	}
+}
+
+func setupCursorHistoricalToolPayloadFixture(
+	t *testing.T,
+	historicalFields map[string]any,
+	historicalAt time.Time,
+	promptAt time.Time,
+	prompt string,
+) {
+	t.Helper()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("WAKATIME_HOME", t.TempDir())
+
+	dbPath := filepath.Join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o755))
+
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	_, err = db.Exec(`CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)`)
+	require.NoError(t, err)
+
+	historicalValue := map[string]any{
+		"_v":        3,
+		"type":      2,
+		"createdAt": historicalAt.Format(time.RFC3339),
+	}
+	for key, value := range historicalFields {
+		historicalValue[key] = value
+	}
+
+	encodedHistorical, err := json.Marshal(historicalValue)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO cursorDiskKV(key, value) VALUES(?, ?)`,
+		"bubbleId:session:historical",
+		encodedHistorical,
+	)
+	require.NoError(t, err)
+
+	recentPromptValue, err := json.Marshal(map[string]any{
+		"_v":        3,
+		"type":      1,
+		"createdAt": promptAt.Format(time.RFC3339),
+		"text":      prompt,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO cursorDiskKV(key, value) VALUES(?, ?)`,
+		"bubbleId:session:recent-prompt",
+		recentPromptValue,
+	)
+	require.NoError(t, err)
+}
