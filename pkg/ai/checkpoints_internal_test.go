@@ -293,6 +293,7 @@ func TestAISyncIndependentSessions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	t.Setenv("FACTORY_DIR", filepath.Join(home, ".factory"))
