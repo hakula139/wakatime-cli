@@ -353,7 +353,7 @@ func (Cursor) openDB(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (Cursor) queryRows(ctx context.Context, db *sql.DB, dbPath string) ([]cursorLogRow, error) {
+func (g Cursor) queryRows(ctx context.Context, db *sql.DB, dbPath string) ([]cursorLogRow, error) {
 	rows, err := db.QueryContext(ctx, `
 WITH recentCursorRows AS (
 	SELECT key, CAST(value AS TEXT) AS value
@@ -361,6 +361,66 @@ WITH recentCursorRows AS (
 	WHERE key LIKE 'bubbleId:%'
 	ORDER BY rowid DESC
 	LIMIT ?
+),
+contextCursorRows AS MATERIALIZED (
+	SELECT key,
+		CASE
+			WHEN julianday(json_extract(value, '$.createdAt')) >= julianday(?) THEN value
+			ELSE (
+				SELECT json_group_object(field.key, CASE
+					WHEN field.key = 'text' THEN ''
+					WHEN field.key = 'toolFormerData' AND field.type = 'object' THEN json_object(
+						'name', json_extract(field.value, '$.name'),
+						'status', json_extract(field.value, '$.status'),
+						-- params and rawArgs are JSON-encoded strings, so coerce the filtered objects to text.
+						-- Malformed and non-object values become '', which Go rejects, preserving the old
+						-- suppression of the edit_file_v2 codeBlocks fallback.
+						-- JSON null becomes '{}', which Go still unmarshals as an empty struct.
+						'params', CASE
+							WHEN json_valid(json_extract(field.value, '$.params')) THEN
+								CASE json_type(json_extract(field.value, '$.params'))
+									WHEN 'object' THEN (
+										SELECT json_group_object(param.key, param.value)
+										FROM json_each(json_extract(field.value, '$.params')) AS param
+										WHERE lower(param.key) IN (
+											'relativeworkspacepath', 'targetfile', 'effectiveuri', 'path'
+										)
+									) || ''
+									WHEN 'null' THEN '{}'
+									ELSE ''
+								END
+							ELSE ''
+						END,
+						'rawArgs', CASE
+							WHEN json_valid(json_extract(field.value, '$.rawArgs')) THEN
+								CASE json_type(json_extract(field.value, '$.rawArgs'))
+									WHEN 'object' THEN (
+										SELECT json_group_object(arg.key, arg.value)
+										FROM json_each(json_extract(field.value, '$.rawArgs')) AS arg
+										WHERE lower(arg.key) = 'target_file'
+									) || ''
+									WHEN 'null' THEN '{}'
+									ELSE ''
+								END
+							ELSE ''
+						END
+					)
+					WHEN field.key = 'codeBlocks' AND field.type = 'array' THEN (
+						SELECT json_group_array(json_object(
+							'uri', json_object('_fsPath', json_extract(block.value, '$.uri._fsPath'))
+						))
+						FROM json_each(field.value) AS block
+					)
+					WHEN field.type IN ('array', 'object') THEN json(field.value)
+					ELSE field.value
+				END)
+				FROM json_each(recentCursorRows.value) AS field
+				WHERE lower(field.key) LIKE '%model%'
+				   OR field.key IN ('createdAt', 'text', 'tokenCount', 'usage', 'toolFormerData', 'codeBlocks')
+			)
+		END AS value
+	FROM recentCursorRows
+	WHERE json_valid(value)
 ),
 filteredCursorRows AS (
 	SELECT
@@ -380,7 +440,7 @@ filteredCursorRows AS (
 				'$.afterContentId'
 			)
 		END AS afterContentId
-	FROM recentCursorRows
+	FROM contextCursorRows
 	WHERE json_valid(value)
 	  AND (
 	    (
@@ -414,7 +474,7 @@ FROM filteredCursorRows AS row
 LEFT JOIN cursorDiskKV AS beforeContent ON beforeContent.key = row.beforeContentId
 LEFT JOIN cursorDiskKV AS afterContent ON afterContent.key = row.afterContentId
 ORDER BY json_extract(row.value, '$.createdAt') ASC;
-`, cursorRecentBubbleRowLimit)
+`, cursorRecentBubbleRowLimit, g.bufferedCutoff().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, fmt.Errorf("failed querying cursor sqlite db %q: %s", dbPath, err)
 	}
