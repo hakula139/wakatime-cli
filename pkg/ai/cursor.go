@@ -373,14 +373,21 @@ contextCursorRows AS MATERIALIZED (
 						'name', json_extract(field.value, '$.name'),
 						'status', json_extract(field.value, '$.status'),
 						-- params and rawArgs are JSON-encoded strings, so coerce the filtered objects to text.
+						-- Older rows may hold empty or malformed nested JSON that json_each rejects.
 						'params', (
 							SELECT json_group_object(param.key, param.value)
-							FROM json_each(json_extract(field.value, '$.params')) AS param
+							FROM json_each(CASE
+								WHEN json_valid(json_extract(field.value, '$.params')) THEN json_extract(field.value, '$.params')
+								ELSE '{}'
+							END) AS param
 							WHERE param.key IN ('relativeWorkspacePath', 'targetFile', 'effectiveUri', 'path')
 						) || '',
 						'rawArgs', (
 							SELECT json_group_object(arg.key, arg.value)
-							FROM json_each(json_extract(field.value, '$.rawArgs')) AS arg
+							FROM json_each(CASE
+								WHEN json_valid(json_extract(field.value, '$.rawArgs')) THEN json_extract(field.value, '$.rawArgs')
+								ELSE '{}'
+							END) AS arg
 							WHERE arg.key = 'target_file'
 						) || ''
 					)

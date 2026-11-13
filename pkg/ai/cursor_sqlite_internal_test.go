@@ -212,6 +212,27 @@ func TestCursorParseHistoricalToolPayloads(t *testing.T) {
 			},
 			wantProject: filepath.FromSlash("/home/u/src/blocks"),
 		},
+		{
+			name: "empty params preserves prompt without project",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status": "completed",
+					"name":   "edit_file_v2",
+					"params": "",
+				},
+			},
+		},
+		{
+			name: "malformed rawArgs preserves prompt without project",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status":  "completed",
+					"name":    "edit_file",
+					"params":  `{}`,
+					"rawArgs": `{"target_file":`,
+				},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			after := time.Date(2026, 10, 12, 10, 0, 30, 0, time.UTC)
