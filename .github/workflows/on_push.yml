@@ -252,6 +252,8 @@ jobs:
     concurrency: tagging
     if: ${{ github.ref == 'refs/heads/release' || github.ref == 'refs/heads/develop' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [
       test,
       test-integration,
@@ -315,7 +317,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          parents="$(git rev-list --parents -n 1 "$GITHUB_SHA")"
+          parents="$(
+            git rev-list "$GITHUB_SHA" \
+              --parents \
+              -n 1
+          )"
           read -r _ parent extra <<< "$parents"
           if [[ -z "$parent" || -n "$extra" ]]; then
             echo "Expected exactly one parent for $GITHUB_SHA" >&2
