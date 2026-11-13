@@ -373,23 +373,35 @@ contextCursorRows AS MATERIALIZED (
 						'name', json_extract(field.value, '$.name'),
 						'status', json_extract(field.value, '$.status'),
 						-- params and rawArgs are JSON-encoded strings, so coerce the filtered objects to text.
-						-- Older rows may hold empty or malformed nested JSON that json_each rejects.
-						'params', (
-							SELECT json_group_object(param.key, param.value)
-							FROM json_each(CASE
-								WHEN json_valid(json_extract(field.value, '$.params')) THEN json_extract(field.value, '$.params')
-								ELSE '{}'
-							END) AS param
-							WHERE param.key IN ('relativeWorkspacePath', 'targetFile', 'effectiveUri', 'path')
-						) || '',
-						'rawArgs', (
-							SELECT json_group_object(arg.key, arg.value)
-							FROM json_each(CASE
-								WHEN json_valid(json_extract(field.value, '$.rawArgs')) THEN json_extract(field.value, '$.rawArgs')
-								ELSE '{}'
-							END) AS arg
-							WHERE arg.key = 'target_file'
-						) || ''
+						-- Malformed and non-object values become '', which Go rejects, preserving the old
+						-- suppression of the edit_file_v2 codeBlocks fallback.
+						-- JSON null becomes '{}', which Go still unmarshals as an empty struct.
+						'params', CASE
+							WHEN json_valid(json_extract(field.value, '$.params')) THEN
+								CASE json_type(json_extract(field.value, '$.params'))
+									WHEN 'object' THEN (
+										SELECT json_group_object(param.key, param.value)
+										FROM json_each(json_extract(field.value, '$.params')) AS param
+										WHERE param.key IN ('relativeWorkspacePath', 'targetFile', 'effectiveUri', 'path')
+									) || ''
+									WHEN 'null' THEN '{}'
+									ELSE ''
+								END
+							ELSE ''
+						END,
+						'rawArgs', CASE
+							WHEN json_valid(json_extract(field.value, '$.rawArgs')) THEN
+								CASE json_type(json_extract(field.value, '$.rawArgs'))
+									WHEN 'object' THEN (
+										SELECT json_group_object(arg.key, arg.value)
+										FROM json_each(json_extract(field.value, '$.rawArgs')) AS arg
+										WHERE arg.key = 'target_file'
+									) || ''
+									WHEN 'null' THEN '{}'
+									ELSE ''
+								END
+							ELSE ''
+						END
 					)
 					WHEN field.key = 'codeBlocks' AND field.type = 'array' THEN (
 						SELECT json_group_array(json_object(

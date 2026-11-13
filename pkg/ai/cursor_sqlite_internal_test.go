@@ -220,6 +220,62 @@ func TestCursorParseHistoricalToolPayloads(t *testing.T) {
 					"name":   "edit_file_v2",
 					"params": "",
 				},
+				"codeBlocks": []any{
+					map[string]any{
+						"uri": map[string]any{
+							"_fsPath": filepath.FromSlash("/home/u/src/rejected/empty.go"),
+						},
+						"content": "package rejected\n",
+					},
+				},
+			},
+		},
+		{
+			name: "array params suppresses code block fallback",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status": "completed",
+					"name":   "edit_file_v2",
+					"params": `[]`,
+				},
+				"codeBlocks": []any{
+					map[string]any{
+						"uri": map[string]any{
+							"_fsPath": filepath.FromSlash("/home/u/src/rejected/array.go"),
+						},
+						"content": "package rejected\n",
+					},
+				},
+			},
+		},
+		{
+			name: "null params preserves code block fallback",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status": "completed",
+					"name":   "edit_file_v2",
+					"params": `null`,
+				},
+				"codeBlocks": []any{
+					map[string]any{
+						"uri": map[string]any{
+							"_fsPath": filepath.FromSlash("/home/u/src/null/null.go"),
+						},
+						"content": "package nullparams\n",
+					},
+				},
+			},
+			wantProject: filepath.FromSlash("/home/u/src/null"),
+		},
+		{
+			name: "non-object rawArgs preserves prompt without project",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status":  "completed",
+					"name":    "edit_file",
+					"params":  `{}`,
+					"rawArgs": `[]`,
+				},
 			},
 		},
 		{
