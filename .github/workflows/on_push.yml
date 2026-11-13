@@ -294,7 +294,7 @@ jobs:
               per_page: 100
             })
             const candidates = pullRequests.filter((pr) =>
-              pr.merge_commit_sha === context.sha && pr.base.ref === baseBranch
+              pr.merged_at != null && pr.merge_commit_sha === context.sha && pr.base.ref === baseBranch
             )
             if (candidates.length !== 1) {
               throw new Error(
