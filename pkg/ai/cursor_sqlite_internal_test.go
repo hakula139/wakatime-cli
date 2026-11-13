@@ -156,6 +156,47 @@ func TestCursorParseProjectsHistoricalRows(t *testing.T) {
 	assert.Equal(t, "composer/2.5 Cursor/1.128.0", got[1].UserAgent)
 }
 
+func TestCursorParseHistoricalRowsBeforeFractionalCutoff(t *testing.T) {
+	after := time.Date(2026, 10, 12, 10, 0, 30, 900_000_000, time.UTC)
+	historicalAt := time.Date(2026, 10, 12, 10, 0, 26, 100_000_000, time.UTC)
+	promptAt := after.Add(-2 * time.Second)
+	prompt := "Please explain the recent changes"
+	setupCursorHistoricalToolPayloadFixture(t, map[string]any{
+		"toolFormerData": map[string]any{
+			"status": "completed",
+			"name":   "edit_file_v2",
+			"params": fmt.Sprintf(
+				`{"relativeWorkspacePath":%q,"streamingContent":%q}`,
+				filepath.FromSlash("/home/u/src/fractional/old.go"),
+				strings.Repeat("s", 2048),
+			),
+		},
+	}, historicalAt, promptAt, prompt)
+
+	budget := &aiSQLiteBudget{bytes: aiSQLiteByteLimit - 1024}
+	ctx := context.WithValue(t.Context(), aiSQLiteBudgetKey{}, budget)
+	got, err := (Cursor{
+		After:             after,
+		FallbackUserAgent: "Cursor/1.128.0",
+	}).Parse(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+
+	assert.LessOrEqual(t, budget.bytes, int64(aiSQLiteByteLimit))
+	assert.Equal(t, "Cursor session", got[0].Entity)
+	assert.Equal(t, "session", got[0].AISession)
+	assert.Equal(t, heartbeat.AppType, got[0].EntityType)
+	assert.Equal(t, heartbeat.AICodingCategory.String(), got[0].Category)
+	assert.Equal(t, float64(promptAt.Unix()), got[0].Time)
+	assert.Equal(t, filepath.FromSlash("/home/u/src/fractional"), got[0].ProjectPathOverride)
+	assert.Equal(t, len([]rune(prompt)), got[0].AIPromptLength)
+	assert.Zero(t, got[0].AIInputTokens)
+	assert.Zero(t, got[0].AIOutputTokens)
+	require.NotNil(t, got[0].IsWrite)
+	assert.False(t, *got[0].IsWrite)
+	assert.Equal(t, "Cursor/1.128.0", got[0].UserAgent)
+}
+
 func TestCursorParseHistoricalToolPayloads(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
@@ -178,6 +219,21 @@ func TestCursorParseHistoricalToolPayloads(t *testing.T) {
 			wantProject: filepath.FromSlash("/home/u/src/params"),
 		},
 		{
+			name: "params mixed-case relativeWorkspacePath",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status": "completed",
+					"name":   "edit_file_v2",
+					"params": fmt.Sprintf(
+						`{"RelativeWorkspacePath":%q,"streamingContent":%q}`,
+						filepath.FromSlash("/home/u/src/params-mixed/old.go"),
+						strings.Repeat("s", 2048),
+					),
+				},
+			},
+			wantProject: filepath.FromSlash("/home/u/src/params-mixed"),
+		},
+		{
 			name: "rawArgs code_edit",
 			historicalFields: map[string]any{
 				"toolFormerData": map[string]any{
@@ -192,6 +248,22 @@ func TestCursorParseHistoricalToolPayloads(t *testing.T) {
 				},
 			},
 			wantProject: filepath.FromSlash("/home/u/src/raw"),
+		},
+		{
+			name: "rawArgs mixed-case target_file",
+			historicalFields: map[string]any{
+				"toolFormerData": map[string]any{
+					"status": "completed",
+					"name":   "edit_file",
+					"params": `{}`,
+					"rawArgs": fmt.Sprintf(
+						`{"Target_File":%q,"code_edit":%q}`,
+						filepath.FromSlash("/home/u/src/raw-mixed/old.go"),
+						strings.Repeat("c", 2048),
+					),
+				},
+			},
+			wantProject: filepath.FromSlash("/home/u/src/raw-mixed"),
 		},
 		{
 			name: "codeBlocks content",
@@ -350,7 +422,7 @@ func setupCursorHistoricalToolPayloadFixture(
 	historicalValue := map[string]any{
 		"_v":        3,
 		"type":      2,
-		"createdAt": historicalAt.Format(time.RFC3339),
+		"createdAt": historicalAt.Format(time.RFC3339Nano),
 	}
 	for key, value := range historicalFields {
 		historicalValue[key] = value

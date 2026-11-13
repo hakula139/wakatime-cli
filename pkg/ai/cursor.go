@@ -365,7 +365,7 @@ WITH recentCursorRows AS (
 contextCursorRows AS MATERIALIZED (
 	SELECT key,
 		CASE
-			WHEN unixepoch(json_extract(value, '$.createdAt')) >= ? THEN value
+			WHEN julianday(json_extract(value, '$.createdAt')) >= julianday(?) THEN value
 			ELSE (
 				SELECT json_group_object(field.key, CASE
 					WHEN field.key = 'text' THEN ''
@@ -382,7 +382,7 @@ contextCursorRows AS MATERIALIZED (
 									WHEN 'object' THEN (
 										SELECT json_group_object(param.key, param.value)
 										FROM json_each(json_extract(field.value, '$.params')) AS param
-										WHERE param.key IN ('relativeWorkspacePath', 'targetFile', 'effectiveUri', 'path')
+										WHERE lower(param.key) IN ('relativeworkspacepath', 'targetfile', 'effectiveuri', 'path')
 									) || ''
 									WHEN 'null' THEN '{}'
 									ELSE ''
@@ -395,7 +395,7 @@ contextCursorRows AS MATERIALIZED (
 									WHEN 'object' THEN (
 										SELECT json_group_object(arg.key, arg.value)
 										FROM json_each(json_extract(field.value, '$.rawArgs')) AS arg
-										WHERE arg.key = 'target_file'
+										WHERE lower(arg.key) = 'target_file'
 									) || ''
 									WHEN 'null' THEN '{}'
 									ELSE ''
@@ -472,7 +472,7 @@ FROM filteredCursorRows AS row
 LEFT JOIN cursorDiskKV AS beforeContent ON beforeContent.key = row.beforeContentId
 LEFT JOIN cursorDiskKV AS afterContent ON afterContent.key = row.afterContentId
 ORDER BY json_extract(row.value, '$.createdAt') ASC;
-`, cursorRecentBubbleRowLimit, g.bufferedCutoff().Unix())
+`, cursorRecentBubbleRowLimit, g.bufferedCutoff().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, fmt.Errorf("failed querying cursor sqlite db %q: %s", dbPath, err)
 	}
