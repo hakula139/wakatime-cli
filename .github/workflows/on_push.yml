@@ -228,14 +228,23 @@ jobs:
     name: CI Result
     # A skipped required check passes, so the gate must run after failures too.
     if: ${{ !cancelled() }}
-    needs: [test, test-integration, test-windows, test-integration-windows, test-macos, test-integration-macos, test-shell-script, ip-check]
+    needs:
+      - test
+      - test-integration
+      - test-windows
+      - test-integration-windows
+      - test-macos
+      - test-integration-macos
+      - test-shell-script
+      - ip-check
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read
 
     steps:
-      - name: Check results
+      -
+        name: Check results
         uses: hakula139/devkit/.github/actions/ci-result@v3
 
   version:
