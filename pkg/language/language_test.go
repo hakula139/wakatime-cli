@@ -271,6 +271,25 @@ func TestDetect_Delphi_FMX_FileInFolder(t *testing.T) {
 	assert.Equal(t, heartbeat.LanguageDelphi, lang)
 }
 
+func TestDetect_Nushell(t *testing.T) {
+	tests := []struct {
+		name     string
+		filepath string
+	}{
+		{name: "without shebang", filepath: "testdata/codefiles/nushell.nu"},
+		{name: "with shebang", filepath: "testdata/codefiles/nushell_shebang.nu"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			lang, err := language.Detect(t.Context(), test.filepath, true)
+			require.NoError(t, err)
+
+			assert.Equal(t, heartbeat.LanguageNushell, lang)
+		})
+	}
+}
+
 func TestDetect_ChromaTopLanguagesRetrofit(t *testing.T) {
 	err := lexer.RegisterAll()
 	require.NoError(t, err)

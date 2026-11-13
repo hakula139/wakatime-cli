@@ -146,6 +146,10 @@ func detectSpecialCases(ctx context.Context, fp string) (heartbeat.Language, boo
 		return heartbeat.LanguageObjectiveCPP, true
 	}
 
+	if ext == ".nu" {
+		return heartbeat.LanguageNushell, true
+	}
+
 	if ext == ".pas" && folderContainsDelphiFiles(ctx, dir) {
 		return heartbeat.LanguageDelphi, true
 	}

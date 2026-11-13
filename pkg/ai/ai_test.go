@@ -31,6 +31,7 @@ func TestWithAISyncDoesNotUpdateLastParsedAtBeforeParsing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	tmpInternal, err := os.CreateTemp(t.TempDir(), "wakatime-internal")
 	require.NoError(t, err)
@@ -67,6 +68,7 @@ func TestWithAISyncUpdatesLastParsedAtBeforeNext(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	initialLastParsedAt := time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC)
 	expectedLastParsedAt := time.Date(2026, 3, 18, 12, 30, 0, 0, time.UTC)
@@ -163,6 +165,7 @@ func TestWithAISyncReleasesLockOnRecoveredPanic(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	entity, err := filepath.Abs("testdata/main.go")
 	require.NoError(t, err)
@@ -237,6 +240,7 @@ func TestSendHeartbeats_WithAIParsing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	entity, err := filepath.Abs("testdata/main.go")
 	require.NoError(t, err)
@@ -604,6 +608,7 @@ func TestSendHeartbeats_WithAIParsingBatchAppliedOnce(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	entity, err := filepath.Abs("testdata/main.go")
 	require.NoError(t, err)
@@ -716,6 +721,7 @@ func TestWithAISyncMarksHumanHeartbeatsAsAICoding(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	entity, err := filepath.Abs("testdata/main.go")
 	require.NoError(t, err)
@@ -860,6 +866,7 @@ func TestWithAISyncSkipsTwoMinuteAICodingForHumanEditsWithChanges(t *testing.T) 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	entity, err := filepath.Abs("testdata/main.go")
 	require.NoError(t, err)
@@ -932,6 +939,7 @@ func TestWithAISync_ProducesExpectedHeartbeats(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	t.Setenv("CODEX_HOME", "")
 
 	now := time.Now()
@@ -1020,6 +1028,7 @@ func TestWithAISync_PreservesCopilotTokensAfterMergingAppHeartbeat(t *testing.T)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	workspaceDir := filepath.Join(home, "Library", "Application Support", "Code", "User", "workspaceStorage", "workspace-1")
 	require.NoError(t, os.MkdirAll(filepath.Join(workspaceDir, "chatSessions"), 0o755))
@@ -1240,6 +1249,7 @@ func TestWithAISyncExcludedPathsPreserveHumanHeartbeats(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
+			t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 			entity, err := filepath.Abs(filepath.Join(home, "main.go"))
 			require.NoError(t, err)
