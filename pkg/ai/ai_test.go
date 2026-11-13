@@ -380,7 +380,6 @@ func TestSendHeartbeats_SkipsAIParsingWhenSyncLockBusy(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	entity, err := filepath.Abs("testdata/main.go")
 	require.NoError(t, err)
@@ -484,7 +483,6 @@ func TestSendHeartbeats_WithAIParsingDisabled(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
 	entity, err := filepath.Abs("testdata/main.go")
 	require.NoError(t, err)
