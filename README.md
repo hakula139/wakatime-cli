@@ -2,7 +2,7 @@
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/hakula139/wakatime-cli/on_push.yml?branch=develop&label=tests)](https://github.com/hakula139/wakatime-cli/actions/workflows/on_push.yml)
 [![Coverage](https://img.shields.io/codecov/c/gh/hakula139/wakatime-cli/develop)](https://codecov.io/gh/hakula139/wakatime-cli)
-[![Upstream downloads](https://img.shields.io/github/downloads/wakatime/wakatime-cli/total?color=007ec6&label=upstream%20downloads)](https://github.com/wakatime/wakatime-cli/releases)
+[![Downloads](https://img.shields.io/github/downloads/hakula139/wakatime-cli/total?color=007ec6)](https://github.com/hakula139/wakatime-cli/releases)
 
 Command line interface to [WakaTime][wakatime] used by all WakaTime [text editor plugins][editors].
 
