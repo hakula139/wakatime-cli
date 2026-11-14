@@ -291,6 +291,11 @@ jobs:
 
     steps:
       -
+        name: Check portable release assets
+        env:
+          RESULT: ${{ needs.portable-release.result }}
+        run: test "$RESULT" = success
+      -
         name: Check results
         uses: hakula139/devkit/.github/actions/ci-result@v3
 

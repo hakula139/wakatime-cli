@@ -99,7 +99,8 @@ def main():
 
     version = (ROOT / 'VERSION').read_text().strip()
     if not re.fullmatch(
-        r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-hakula\.([1-9]\d*)', version
+        r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-hakula\.([1-9][0-9]*)',
+        version,
     ):
         raise ValueError('VERSION must use X.Y.Z-hakula.N')
 
