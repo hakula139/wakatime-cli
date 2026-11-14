@@ -58,12 +58,26 @@ func startProfiling(ctx context.Context, deps profilingDeps) (func(), error) {
 
 	logger := log.Extract(ctx)
 
-	if err := deps.startCPUProfile(cpuf); err != nil {
+	err = deps.startCPUProfile(cpuf)
+	cpuStarted := err == nil
+	if err != nil {
 		logger.Errorf("failed to start cpu profile: %s", err)
+	}
+
+	closeCPU := func() {
+		if cpuStarted {
+			deps.stopCPUProfile()
+		}
+
+		if err := cpuf.Close(); err != nil {
+			logger.Errorf("failed to close cpu profile file: %s", err)
+		}
 	}
 
 	memf, err := deps.createFile(filepath.Join(metricsFolder, fmt.Sprintf("mem_%s.profile", now)))
 	if err != nil {
+		closeCPU()
+
 		return nil, fmt.Errorf("failed to create mem profile file: %s", err)
 	}
 
@@ -72,11 +86,7 @@ func startProfiling(ctx context.Context, deps profilingDeps) (func(), error) {
 	}
 
 	return func() {
-		deps.stopCPUProfile()
-
-		if err := cpuf.Close(); err != nil {
-			logger.Errorf("failed to close cpu profile file: %s", err)
-		}
+		closeCPU()
 
 		if err := memf.Close(); err != nil {
 			logger.Errorf("failed to close mem profile file: %s", err)
