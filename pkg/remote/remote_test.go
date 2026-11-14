@@ -30,6 +30,75 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func TestMain(m *testing.M) {
+	if os.Getenv("WAKATIME_TEST_REMOTE_SCP") == "1" {
+		if err := os.WriteFile(os.Args[len(os.Args)-1], []byte("package example\n"), 0600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		os.Exit(0)
+	}
+
+	os.Exit(m.Run())
+}
+
+func TestWithDetection_FallbackPreservesHeartbeat(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(executable)
+	require.NoError(t, err)
+
+	binDir := t.TempDir()
+	name := "scp"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, name), data, 0700))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("WAKATIME_TEST_REMOTE_SCP", "1")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	entity := "ssh://user:pass@" + address + "/home/u/src/example.go"
+	var localFile string
+	sender := mockSender{
+		SendHeartbeatsFn: func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+			require.Len(t, hh, 1)
+			assert.Equal(t, entity, hh[0].Entity)
+			assert.True(t, hh[0].LocalFileNeedsCleanup)
+			localFile = hh[0].LocalFile
+
+			content, err := os.ReadFile(localFile)
+			require.NoError(t, err)
+			assert.Equal(t, "package example\n", string(content))
+
+			return nil, nil
+		},
+	}
+	handle := heartbeat.NewHandle(&sender, remote.WithDetection())
+
+	_, err = handle(t.Context(), []heartbeat.Heartbeat{{Entity: entity, EntityType: heartbeat.FileType}})
+	require.NoError(t, err)
+
+	require.NotEmpty(t, localFile)
+	cleanup := heartbeat.NewHandle(&mockSender{
+		SendHeartbeatsFn: func(context.Context, []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+			return nil, nil
+		},
+	}, remote.WithCleanup())
+	_, err = cleanup(t.Context(), []heartbeat.Heartbeat{{LocalFile: localFile, LocalFileNeedsCleanup: true}})
+	require.NoError(t, err)
+	_, err = os.Stat(localFile)
+	assert.True(t, os.IsNotExist(err))
+}
+
 func TestNewClient(t *testing.T) {
 	client, err := remote.NewClient(
 		t.Context(),
