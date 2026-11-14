@@ -194,14 +194,17 @@ The format is: `pattern = api_url|api_key`
 [api_urls]
 ^/home/user/work/ = https://work.example.com/api/v1|your-work-api-key
 ^/home/user/personal/ = https://personal.example.com/api/v1|your-personal-api-key
-.* = https://your-backup-server.com/api/v1|your-backup-api-key
+.* =
+⁠.* = https://your-backup-server.com/api/v1|your-backup-api-key ⁠
+
 ```
 
 With this configuration:
 
-- Files in `/home/user/work/` send heartbeats to `work.example.com` and `your-backup-server.com`, plus the default API when `api_key` is set.
-- Files in `/home/user/personal/` send heartbeats to `personal.example.com` and `your-backup-server.com`, plus the default API when `api_key` is set.
-- Other files send heartbeats to `your-backup-server.com`, plus the default API when `api_key` is set.
+- Files in `/home/user/work/` are sent to both the default WakaTime API (if `api_key` is set) AND `work.example.com`
+- Files in `/home/user/personal/` are sent to both the default WakaTime API (if `api_key` is set) AND `personal.example.com`
+- When no api_url or no api_key are present(`.* = `), the default api_key and api_url are used
+- ⁠Files not matching the work or personal regex patterns are sent to both the default api url and your-backup-server.com (duplicated/tee'd)
 
 ### Api Key Environment Variable
 
