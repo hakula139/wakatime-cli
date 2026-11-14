@@ -53,11 +53,15 @@ func TestClient_StatusBarWithTimeout(t *testing.T) {
 	u, router, tearDown := setupTestServer()
 	defer tearDown()
 
-	block := make(chan struct{})
-	defer close(block)
+	router.HandleFunc("/users/current/statusbar/today", func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(200 * time.Millisecond)
 
-	router.HandleFunc("/users/current/statusbar/today", func(_ http.ResponseWriter, _ *http.Request) {
-		<-block
+		response, err := os.ReadFile("testdata/api_statusbar_today_response.json")
+		require.NoError(t, err)
+
+		w.WriteHeader(http.StatusOK)
+		_, err = w.Write(response)
+		require.NoError(t, err)
 	})
 
 	opts := []api.Option{api.WithTimeout(20 * time.Millisecond)}

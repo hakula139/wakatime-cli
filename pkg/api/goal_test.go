@@ -53,12 +53,16 @@ func TestClient_GoalWithTimeout(t *testing.T) {
 	u, router, tearDown := setupTestServer()
 	defer tearDown()
 
-	block := make(chan struct{})
-	defer close(block)
-
 	router.HandleFunc(
-		"/users/current/goals/00000000-0000-4000-8000-000000000000", func(_ http.ResponseWriter, _ *http.Request) {
-			<-block
+		"/users/current/goals/00000000-0000-4000-8000-000000000000", func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(200 * time.Millisecond)
+
+			response, err := os.ReadFile("testdata/api_goals_id_response.json")
+			require.NoError(t, err)
+
+			w.WriteHeader(http.StatusOK)
+			_, err = w.Write(response)
+			require.NoError(t, err)
 		})
 
 	opts := []api.Option{api.WithTimeout(20 * time.Millisecond)}
