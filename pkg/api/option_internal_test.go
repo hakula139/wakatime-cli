@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,6 +58,36 @@ func TestClientDoDNSFallback(t *testing.T) {
 
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 	assert.Equal(t, 2, calls)
+}
+
+func TestSendHeartbeatsCustomDestinationDoesNotFallback(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		url  string
+		host string
+	}{
+		{name: "custom host", url: "https://custom.example.com/api", host: "custom.example.com"},
+		{name: "lookalike host", url: "https://api.wakatime.com.example.com/api", host: "api.wakatime.com.example.com"},
+		{name: "insecure scheme", url: "http://api.wakatime.com/api", host: "api.wakatime.com"},
+		{name: "custom port", url: "https://api.wakatime.com:8443/api", host: "api.wakatime.com:8443"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := NewClient(BaseURL)
+			var destinations []string
+			client.doFunc = func(_ *Client, req *http.Request) (*http.Response, error) {
+				destinations = append(destinations, req.URL.Host)
+
+				return nil, &net.DNSError{Err: "no such host", Name: test.host}
+			}
+
+			_, err := client.SendHeartbeats(t.Context(), []heartbeat.Heartbeat{{
+				APIURL: test.url, APIKey: "test-key", Entity: "/home/u/src/example.go",
+			}})
+
+			require.Error(t, err)
+			assert.Equal(t, []string{test.host}, destinations)
+		})
+	}
 }
 
 func TestClientDoDNSFallbackRetryError(t *testing.T) {
