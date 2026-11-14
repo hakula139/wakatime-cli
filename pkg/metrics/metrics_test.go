@@ -63,6 +63,7 @@ func TestStartProfiling_CPUAlreadyProfiling(t *testing.T) {
 	defer cpuProfile.Close()
 
 	require.NoError(t, pprof.StartCPUProfile(cpuProfile))
+	defer pprof.StopCPUProfile()
 
 	stop, err := metrics.StartProfiling(t.Context())
 	require.NoError(t, err)

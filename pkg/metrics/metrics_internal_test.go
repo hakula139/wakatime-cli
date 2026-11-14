@@ -38,24 +38,49 @@ func TestStartProfilingCPUFileError(t *testing.T) {
 }
 
 func TestStartProfilingMemFileError(t *testing.T) {
-	var calls int
+	for _, cpuBusy := range []bool{false, true} {
+		name := "owned CPU profiler"
+		if cpuBusy {
+			name = "external CPU profiler"
+		}
 
-	stop, err := startProfiling(t.Context(), defaultTestProfilingDeps(t, profilingDeps{
-		mkdirAll:        func(string, os.FileMode) error { return nil },
-		startCPUProfile: func(io.Writer) error { return nil },
-		createFile: func(string) (io.WriteCloser, error) {
-			calls++
-			if calls == 2 {
-				return nil, errors.New("create mem")
+		t.Run(name, func(t *testing.T) {
+			cpuFile, err := os.CreateTemp(t.TempDir(), "cpu")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = cpuFile.Close() })
+			var calls, stops int
+
+			stop, err := startProfiling(t.Context(), defaultTestProfilingDeps(t, profilingDeps{
+				mkdirAll: func(string, os.FileMode) error { return nil },
+				startCPUProfile: func(io.Writer) error {
+					if cpuBusy {
+						return errors.New("cpu busy")
+					}
+
+					return nil
+				},
+				stopCPUProfile: func() { stops++ },
+				createFile: func(string) (io.WriteCloser, error) {
+					calls++
+					if calls == 2 {
+						return nil, errors.New("create mem")
+					}
+
+					return cpuFile, nil
+				},
+			}))
+			require.ErrorContains(t, err, "failed to create mem profile file")
+			assert.Nil(t, stop)
+
+			_, writeErr := cpuFile.Write([]byte("closed"))
+			assert.ErrorIs(t, writeErr, os.ErrClosed)
+			if cpuBusy {
+				assert.Zero(t, stops)
+			} else {
+				assert.Equal(t, 1, stops)
 			}
-
-			return nopWriteCloser{}, nil
-		},
-	}))
-
-	require.Error(t, err)
-	assert.Nil(t, stop)
-	assert.Contains(t, err.Error(), "failed to create mem profile file")
+		})
+	}
 }
 
 func TestStartProfilingProfileAndCloseErrors(t *testing.T) {
@@ -72,7 +97,7 @@ func TestStartProfilingProfileAndCloseErrors(t *testing.T) {
 	require.NotNil(t, stop)
 
 	stop()
-	assert.True(t, stopped)
+	assert.False(t, stopped)
 }
 
 func TestStartProfilingCreatesMetricsFolderThroughHook(t *testing.T) {
