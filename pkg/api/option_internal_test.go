@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 
@@ -36,13 +37,14 @@ func TestClientDoDNSFallback(t *testing.T) {
 
 	client := &Client{
 		baseURL: BaseURL,
+		client:  &http.Client{Transport: NewTransport()},
 		doFunc: func(_ *Client, req *http.Request) (*http.Response, error) {
 			calls++
 			if calls == 1 {
 				return nil, &net.DNSError{Err: "no such host", Name: "api.wakatime.com"}
 			}
 
-			assert.Contains(t, []string{BaseIPAddrv4, BaseIPAddrv6}, req.URL.Host)
+			assert.Contains(t, []string{BaseIPAddrv4, "[" + BaseIPAddrv6 + "]"}, req.URL.Host)
 
 			return &http.Response{
 				StatusCode: http.StatusAccepted,
@@ -73,7 +75,9 @@ func TestSendHeartbeatsCustomDestinationDoesNotFallback(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := NewClient(BaseURL)
+
 			var destinations []string
+
 			client.doFunc = func(_ *Client, req *http.Request) (*http.Response, error) {
 				destinations = append(destinations, req.URL.Host)
 
@@ -98,6 +102,7 @@ func TestClientDoDNSFallbackRetryError(t *testing.T) {
 
 	client := &Client{
 		baseURL: BaseURL,
+		client:  &http.Client{Transport: NewTransport()},
 		doFunc: func(_ *Client, _ *http.Request) (*http.Response, error) {
 			calls++
 			if calls == 1 {
@@ -113,6 +118,39 @@ func TestClientDoDNSFallbackRetryError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "retry request failed: retry failed")
 	assert.Equal(t, 2, calls)
+}
+
+func TestClientDoDNSFallbackPreservesRequestAndClient(t *testing.T) {
+	client := NewClient(BaseURL)
+	client.client.Timeout = 5 * time.Second
+	originalClient := client.client
+	url := BaseURL + "/users/current/heartbeats.bulk"
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader("payload"))
+	require.NoError(t, err)
+
+	var bodies []string
+
+	client.doFunc = func(c *Client, req *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+
+		bodies = append(bodies, string(body))
+
+		assert.Equal(t, 5*time.Second, c.client.Timeout)
+
+		if len(bodies) == 1 {
+			return nil, &net.DNSError{Err: "no such host", Name: "api.wakatime.com"}
+		}
+
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(""))}, nil
+	}
+
+	err = doAndClose(t, client, req)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"payload", "payload"}, bodies)
+	assert.Equal(t, url, req.URL.String())
+	assert.Same(t, originalClient, client.client)
 }
 
 func TestClientDoDoesNotFallback(t *testing.T) {

@@ -92,7 +92,7 @@ func WithNTLMRequestRetry(ctx context.Context, creds string) (Option, error) {
 
 		next := c.doFunc
 		c.doFunc = func(cl *Client, req *http.Request) (*http.Response, error) {
-			resp, err := next(c, req)
+			resp, err := next(cl, req)
 			if err != nil {
 				logger.Errorf("request to api failed with error %q. Will retry with ntlm auth", err)
 
