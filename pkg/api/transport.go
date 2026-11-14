@@ -159,7 +159,12 @@ func dnsFallbackTransport(ctx context.Context, current http.RoundTripper) http.R
 // LazyCreateNewTransport uses the client's Transport if exists, or creates a new one.
 func LazyCreateNewTransport(c *Client) *http.Transport {
 	if c != nil && c.client != nil && c.client.Transport != nil {
-		return c.client.Transport.(*http.Transport).Clone()
+		transport := c.client.Transport
+		if negotiator, ok := transport.(ntlmssp.Negotiator); ok {
+			transport = negotiator.RoundTripper
+		}
+
+		return transport.(*http.Transport).Clone()
 	}
 
 	return NewTransport()

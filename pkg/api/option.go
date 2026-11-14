@@ -27,13 +27,23 @@ func WithAuth(auth BasicAuth) (Option, error) {
 		return nil, fmt.Errorf("failed to retrieve auth header value: %w", err)
 	}
 
+	return withAuthHeader(authHeaderValue), nil
+}
+
+func withAuthHeader(authHeaderValue string) Option {
 	return func(c *Client) {
 		next := c.doFunc
 		c.doFunc = func(c *Client, req *http.Request) (*http.Response, error) {
-			req.Header.Set("Authorization", authHeaderValue)
+			headerValue := authHeaderValue
+			if c.ntlmAuthHeader != "" {
+				headerValue = c.ntlmAuthHeader
+			}
+
+			req.Header.Set("Authorization", headerValue)
+
 			return next(c, req)
 		}
-	}, nil
+	}
 }
 
 // WithDisableSSLVerify disables verification of insecure certificates.
@@ -65,13 +75,14 @@ func WithNTLM(creds string) (Option, error) {
 		auth.Secret = splitted[1]
 	}
 
-	withAuth, err := WithAuth(auth)
+	authHeaderValue, err := auth.HeaderValue()
 	if err != nil {
-		return Option(func(*Client) {}), err
+		return Option(func(*Client) {}), fmt.Errorf("failed to retrieve auth header value: %w", err)
 	}
 
 	return func(c *Client) {
-		withAuth(c)
+		c.ntlmAuthHeader = authHeaderValue
+		withAuthHeader(authHeaderValue)(c)
 
 		c.client.Transport = ntlmssp.Negotiator{
 			AllowBasicAuth: true,
@@ -149,14 +160,18 @@ func WithProxy(proxyURL string) (Option, error) {
 			transport := LazyCreateNewTransport(c)
 			transport.Proxy = http.ProxyURL(&httpProxyURL)
 
-			previousTransport := c.client.Transport
-			c.client.Transport = transport
+			var retryTransport http.RoundTripper = transport
+			if negotiator, ok := c.client.Transport.(ntlmssp.Negotiator); ok {
+				negotiator.RoundTripper = transport
+				retryTransport = negotiator
+			}
 
-			defer func() {
-				c.client.Transport = previousTransport
-			}()
+			clientRetry := *c
+			httpClientRetry := *c.client
+			httpClientRetry.Transport = retryTransport
+			clientRetry.client = &httpClientRetry
 
-			return next(c, reqRetry)
+			return next(&clientRetry, reqRetry)
 		}
 	}, nil
 }
