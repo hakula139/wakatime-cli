@@ -43,5 +43,3 @@ Run `make test-all` before creating any pull requests, or your PR won’t pass t
 ## Troubleshooting
 
 - Race detection is enabled by default on `Makefile` and it may fail on macOS Monterey (OSX 12.0). You might temporarily set the environment variable `MallocNanoZone=0`. More details in this [thread](https://github.com/golang/go/issues/49138).
-
-Any question join us on [Slack](https://wakaslack.herokuapp.com/).
