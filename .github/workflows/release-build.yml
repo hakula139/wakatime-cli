@@ -1,0 +1,92 @@
+name: Portable Release
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      -
+        name: Build and verify archive
+        run: python3 bin/package_release.py "${{ matrix.target }}"
+      -
+        name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  assets:
+    name: Collect release assets
+    needs: build
+    runs-on: ubuntu-24.04
+
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Download Linux amd64
+        uses: actions/download-artifact@v4
+        with:
+          name: release-linux-amd64
+          path: dist
+      -
+        name: Download Linux arm64
+        uses: actions/download-artifact@v4
+        with:
+          name: release-linux-arm64
+          path: dist
+      -
+        name: Download macOS arm64
+        uses: actions/download-artifact@v4
+        with:
+          name: release-darwin-arm64
+          path: dist
+      -
+        name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(<VERSION)
+          cd dist
+          files=(
+            "wakatime-cli-${version}-linux-amd64.tar.gz"
+            "wakatime-cli-${version}-linux-arm64.tar.gz"
+            "wakatime-cli-${version}-darwin-arm64.tar.gz"
+          )
+          [[ $(find . -mindepth 1 -maxdepth 1 | wc -l) -eq 3 ]]
+          sha256sum "${files[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      -
+        name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/
+          if-no-files-found: error

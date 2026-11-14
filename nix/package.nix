@@ -19,7 +19,7 @@ let
 in
 buildGoModule (finalAttrs: {
   pname = "wakatime-cli";
-  version = "2.28.4-unstable-${date}";
+  version = lib.trim (builtins.readFile ../VERSION);
   src = source;
 
   vendorHash = "sha256-Tz0MvNU9iuIMNzWsy/R8+onBb2iZBCAem2XyAH8pVP4=";
