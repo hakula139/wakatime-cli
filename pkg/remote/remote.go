@@ -67,12 +67,7 @@ func WithDetection() heartbeat.HandleOption {
 					continue
 				}
 
-				if err := tmpFile.Close(); err != nil {
-					logger.Errorf("failed to close temporary file: %s", err)
-					deleteLocalFile(ctx, tmpFile.Name())
-
-					continue
-				}
+				_ = tmpFile.Close()
 
 				c, err := NewClient(ctx, h.Entity)
 				if err != nil {
