@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,25 @@ import (
 	"github.com/stretchr/testify/require"
 	bolt "go.etcd.io/bbolt"
 )
+
+func TestRunCmd_RestoresLogOutput(t *testing.T) {
+	var output bytes.Buffer
+	logger := log.New(&output)
+	ctx := log.ToContext(t.Context(), logger)
+	v := viper.New()
+
+	for _, message := range []string{"first command", "second command"} {
+		err := cmd.RunCmd(ctx, v, false, false, func(ctx context.Context, _ *viper.Viper) (int, error) {
+			log.Extract(ctx).Infof("%s", message)
+
+			return exitcode.Success, nil
+		})
+		require.NoError(t, err)
+
+		assert.Same(t, &output, logger.Output(), message)
+		assert.Contains(t, output.String(), message)
+	}
+}
 
 func TestRunCmd_Err(t *testing.T) {
 	testServerURL, router, tearDown := setupTestServer()
