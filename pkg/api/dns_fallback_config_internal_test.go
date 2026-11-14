@@ -97,53 +97,105 @@ func TestDNSFallbackPreservesTransportConfiguration(t *testing.T) {
 }
 
 func TestDNSFallbackKeepsDefaultCertificateRoots(t *testing.T) {
-	client := NewClient(BaseURL)
+	for name, transport := range map[string]*http.Transport{
+		"default":                      NewTransport(),
+		"without HTTP2 initialization": {TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := NewClient(BaseURL)
+			client.client.Transport = transport
 
-	var calls int
+			var calls int
 
-	client.doFunc = func(c *Client, _ *http.Request) (*http.Response, error) {
-		calls++
-		if calls == 1 {
-			return nil, &net.DNSError{Err: "no such host", Name: "api.wakatime.com"}
-		}
+			client.doFunc = func(c *Client, _ *http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					return nil, &net.DNSError{Err: "no such host", Name: "api.wakatime.com"}
+				}
 
-		transport, ok := c.client.Transport.(*http.Transport)
-		require.True(t, ok)
-		require.NotNil(t, transport.TLSClientConfig)
-		assert.NotNil(t, transport.TLSClientConfig.RootCAs)
+				retry, ok := c.client.Transport.(*http.Transport)
+				require.True(t, ok)
+				require.NotNil(t, retry.TLSClientConfig)
+				assert.NotNil(t, retry.TLSClientConfig.RootCAs)
+				assert.Equal(t, "api.wakatime.com", retry.TLSClientConfig.ServerName)
 
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+				if !transport.ForceAttemptHTTP2 {
+					assert.GreaterOrEqual(t, retry.TLSClientConfig.MinVersion, uint16(tls.VersionTLS12))
+				}
+
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+			}
+			req, err := http.NewRequest(http.MethodGet, BaseURL+"/users/current", nil)
+			require.NoError(t, err)
+
+			err = doAndClose(t, client, req)
+			require.NoError(t, err)
+
+			assert.Equal(t, 2, calls)
+
+			if !transport.ForceAttemptHTTP2 {
+				assert.Nil(t, transport.TLSClientConfig)
+			}
+		})
 	}
-	req, err := http.NewRequest(http.MethodGet, BaseURL+"/users/current", nil)
-	require.NoError(t, err)
-
-	err = doAndClose(t, client, req)
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, calls)
 }
 
 func TestDNSFallbackLeavesUnsupportedTransportUntouched(t *testing.T) {
-	client := NewClient(BaseURL)
 	transport := &dnsTestRoundTripper{}
-	client.client.Transport = transport
+	for name, current := range map[string]http.RoundTripper{
+		"custom":                 transport,
+		"ntlm with custom inner": ntlmssp.Negotiator{RoundTripper: transport},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := NewClient(BaseURL)
+			client.client.Transport = current
+			dnsErr := &net.DNSError{Err: "no such host", Name: "api.wakatime.com"}
+
+			var calls int
+
+			client.doFunc = func(*Client, *http.Request) (*http.Response, error) {
+				calls++
+
+				return nil, dnsErr
+			}
+			req, err := http.NewRequest(http.MethodGet, BaseURL+"/users/current", nil)
+			require.NoError(t, err)
+
+			err = doAndClose(t, client, req)
+
+			assert.ErrorIs(t, err, dnsErr)
+			assert.Equal(t, 1, calls)
+			assert.Equal(t, current, client.client.Transport)
+		})
+	}
+}
+
+func TestDNSFallbackDoesNotReplayStreamingBody(t *testing.T) {
+	client := NewClient(BaseURL)
+	original := client.client
 	dnsErr := &net.DNSError{Err: "no such host", Name: "api.wakatime.com"}
 
 	var calls int
 
-	client.doFunc = func(*Client, *http.Request) (*http.Response, error) {
+	client.doFunc = func(_ *Client, req *http.Request) (*http.Response, error) {
 		calls++
+		body, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		assert.Equal(t, "payload", string(body))
+		require.NoError(t, req.Body.Close())
 
 		return nil, dnsErr
 	}
-	req, err := http.NewRequest(http.MethodGet, BaseURL+"/users/current", nil)
+	address := BaseURL + "/users/current/heartbeats.bulk"
+	req, err := http.NewRequest(http.MethodPost, address, io.NopCloser(strings.NewReader("payload")))
 	require.NoError(t, err)
 
 	err = doAndClose(t, client, req)
 
 	assert.ErrorIs(t, err, dnsErr)
 	assert.Equal(t, 1, calls)
-	assert.Same(t, transport, client.client.Transport)
+	assert.Equal(t, address, req.URL.String())
+	assert.Same(t, original, client.client)
 }
 
 type dnsTestRoundTripper struct{}
