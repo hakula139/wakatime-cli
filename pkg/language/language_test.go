@@ -3,6 +3,8 @@ package language_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
@@ -243,6 +245,34 @@ func TestDetect_NonHeaderFile_C_FilesInFolder(t *testing.T) {
 	assert.Equal(t, heartbeat.LanguagePython, lang)
 }
 
+func TestDetect_NonCFamilyWithCNeighbors(t *testing.T) {
+	cases := []struct {
+		extension string
+		language  heartbeat.Language
+	}{
+		{".css", heartbeat.LanguageCSS},
+		{".cs", heartbeat.LanguageCSharp},
+		{".html", heartbeat.LanguageHTML},
+		{".hs", heartbeat.LanguageHaskell},
+	}
+
+	for _, neighbor := range []string{"neighbor.c", "neighbor.cpp"} {
+		for _, tc := range cases {
+			t.Run(neighbor+tc.extension, func(t *testing.T) {
+				dir := t.TempDir()
+				fp := filepath.Join(dir, "example"+tc.extension)
+				require.NoError(t, os.WriteFile(fp, nil, 0600))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, neighbor), nil, 0600))
+
+				lang, err := language.Detect(t.Context(), fp, false)
+				require.NoError(t, err)
+
+				assert.Equal(t, tc.language, lang)
+			})
+		}
+	}
+}
+
 func TestDetect_Perl_Over_Prolog(t *testing.T) {
 	lang, err := language.Detect(t.Context(), "testdata/codefiles/perl.pl", false)
 	require.NoError(t, err)
@@ -378,7 +408,7 @@ func TestDetect_ChromaTopLanguagesRetrofit(t *testing.T) {
 		"cmake": {
 			Filepaths: []string{
 				"path/to/file.cmake",
-				"path/to/CMmakeLists.txt",
+				"path/to/CMakeLists.txt",
 			},
 			Expected: heartbeat.LanguageCMake,
 		},
