@@ -32,11 +32,11 @@ func (t Tfvc) Detect(ctx context.Context) (Result, bool, error) {
 		return Result{}, false, nil
 	}
 
-	project := filepath.Base(filepath.Join(tfDirectory, "..", ".."))
+	root := filepath.Dir(filepath.Dir(tfDirectory))
 
 	return Result{
-		Project: project,
-		Folder:  filepath.Dir(filepath.Join(tfDirectory, "..", "..")),
+		Project: filepath.Base(root),
+		Folder:  root,
 	}, true, nil
 }
 

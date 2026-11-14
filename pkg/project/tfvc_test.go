@@ -31,7 +31,7 @@ func TestTfvc_Detect(t *testing.T) {
 	assert.Equal(t, project.Result{
 		Project: "wakatime-cli",
 		Branch:  "",
-		Folder:  result.Folder,
+		Folder:  filepath.Join(fp, "wakatime-cli"),
 	}, result)
 }
 
@@ -53,7 +53,7 @@ func TestTfvc_Detect_Windows(t *testing.T) {
 	assert.Equal(t, project.Result{
 		Project: "wakatime-cli",
 		Branch:  "",
-		Folder:  result.Folder,
+		Folder:  filepath.Join(fp, "wakatime-cli"),
 	}, result)
 }
 
