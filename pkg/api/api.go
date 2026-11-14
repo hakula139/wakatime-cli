@@ -67,8 +67,8 @@ func NewClient(baseURL string, opts ...Option) *Client {
 func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	resp, err := c.doFunc(c, req)
 	if err != nil {
-		// don't set alternate host if there's a custom api url
-		if !strings.HasPrefix(c.baseURL, BaseURL) {
+		if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Hostname(), serverName) ||
+			(req.URL.Port() != "" && req.URL.Port() != "443") {
 			return nil, err
 		}
 
