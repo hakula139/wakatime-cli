@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/viper"
@@ -168,46 +169,48 @@ func TestSyncCheckpointQuietSessionDoesNotLowerDiscovery(t *testing.T) {
 }
 
 func TestAISyncSQLiteParsersDoNotUseCheckpoints(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	runAISyncTest(t, func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
 
-	v := viper.New()
-	v.Set("internal-config", filepath.Join(home, "internal.cfg"))
-	v.Set("internal.ai_logs_last_parsed_at", time.Now().Add(-time.Hour).Format(time.RFC3339Nano))
+		v := viper.New()
+		v.Set("internal-config", filepath.Join(home, "internal.cfg"))
+		v.Set("internal.ai_logs_last_parsed_at", time.Now().Add(-time.Hour).Format(time.RFC3339Nano))
 
-	sqliteParsers := []string{
-		(Gemini{}).Name(), (Cody{}).Name(), (Copilot{}).Name(), (Cursor{}).Name(), (Goose{}).Name(),
-		(OpenCode{}).Name(), (Qoder{}).Name(), (Windsurf{}).Name(), (Crush{}).Name(), (CursorAgent{}).Name(),
-		(Forge{}).Name(), (Hermes{}).Name(), (KiloCode{}).Name(), (QuickDesk{}).Name(), (Warp{}).Name(),
-		(ZCode{}).Name(), (Zed{}).Name(),
-	}
+		sqliteParsers := []string{
+			(Gemini{}).Name(), (Cody{}).Name(), (Copilot{}).Name(), (Cursor{}).Name(), (Goose{}).Name(),
+			(OpenCode{}).Name(), (Qoder{}).Name(), (Windsurf{}).Name(), (Crush{}).Name(), (CursorAgent{}).Name(),
+			(Forge{}).Name(), (Hermes{}).Name(), (KiloCode{}).Name(), (QuickDesk{}).Name(), (Warp{}).Name(),
+			(ZCode{}).Name(), (Zed{}).Name(),
+		}
 
-	// State left behind by an earlier build that checkpointed a sqlite parser,
-	// including its row cursors.
-	statePath := filepath.Join(home, "internal-ai-parsing.json")
-	stale := `{"version":1,"parsers":{"` + (Zed{}).Name() + `":{"cutoff":"2026-09-01T12:00:00Z",` +
-		`"sessions":{},"cursors":{"/tmp/cursor.json":{"Version":2}}}}}`
-	require.NoError(t, os.WriteFile(statePath, []byte(stale), 0o600))
+		// State left behind by an earlier build that checkpointed a sqlite parser,
+		// including its row cursors.
+		statePath := filepath.Join(home, "internal-ai-parsing.json")
+		stale := `{"version":1,"parsers":{"` + (Zed{}).Name() + `":{"cutoff":"2026-09-01T12:00:00Z",` +
+			`"sessions":{},"cursors":{"/tmp/cursor.json":{"Version":2}}}}}`
+		require.NoError(t, os.WriteFile(statePath, []byte(stale), 0o600))
 
-	handler := WithAISync(Config{V: v})(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-		return nil, nil
+		handler := WithAISync(Config{V: v})(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+			return nil, nil
+		})
+		_, err := handler(t.Context(), nil)
+		require.NoError(t, err)
+
+		raw, err := os.ReadFile(statePath)
+		require.NoError(t, err)
+
+		var state syncCheckpoints
+		require.NoError(t, json.Unmarshal(raw, &state))
+		assert.Contains(t, state.Parsers, (Claude{}).Name())
+
+		for _, name := range sqliteParsers {
+			assert.NotContains(t, state.Parsers, name, "sqlite parser %s must not be checkpointed", name)
+		}
+
+		assert.NotContains(t, string(raw), "cursors")
 	})
-	_, err := handler(t.Context(), nil)
-	require.NoError(t, err)
-
-	raw, err := os.ReadFile(statePath)
-	require.NoError(t, err)
-
-	var state syncCheckpoints
-	require.NoError(t, json.Unmarshal(raw, &state))
-	assert.Contains(t, state.Parsers, (Claude{}).Name())
-
-	for _, name := range sqliteParsers {
-		assert.NotContains(t, state.Parsers, name, "sqlite parser %s must not be checkpointed", name)
-	}
-
-	assert.NotContains(t, string(raw), "cursors")
 }
 
 func TestClaudeTranscriptPrefixUsesPrefixedSessionCutoff(t *testing.T) {
@@ -232,174 +235,194 @@ func TestClaudeTranscriptPrefixUsesPrefixedSessionCutoff(t *testing.T) {
 }
 
 func TestAISyncFutureTimestampDoesNotWipeCheckpoints(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	runAISyncTest(t, func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 
-	now := time.Now().UTC()
-	v := viper.New()
-	v.Set("internal-config", filepath.Join(home, "internal.cfg"))
-	v.Set("internal.ai_logs_last_parsed_at", now.Add(-time.Hour).Format(time.RFC3339Nano))
+		now := time.Now().UTC()
+		v := viper.New()
+		v.Set("internal-config", filepath.Join(home, "internal.cfg"))
+		v.Set("internal.ai_logs_last_parsed_at", now.Add(-time.Hour).Format(time.RFC3339Nano))
 
-	prompt := func(stamp time.Time, id string) string {
-		return `{"timestamp":"` + stamp.Format(time.RFC3339Nano) + `","sessionId":"` + id + `","type":"user",` +
-			`"message":{"role":"user","content":"continue"}}` + "\n"
-	}
-	write := func(name, contents string, flag int) {
-		path := filepath.Join(home, ".claude", "projects", "project", name)
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		prompt := func(stamp time.Time, id string) string {
+			return `{"timestamp":"` + stamp.Format(time.RFC3339Nano) + `","sessionId":"` + id + `","type":"user",` +
+				`"message":{"role":"user","content":"continue"}}` + "\n"
+		}
+		write := func(name, contents string, flag int) {
+			path := filepath.Join(home, ".claude", "projects", "project", name)
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 
-		f, err := os.OpenFile(path, flag|os.O_CREATE|os.O_WRONLY, 0o600)
-		require.NoError(t, err)
-		_, err = f.WriteString(contents)
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
-	}
+			f, err := os.OpenFile(path, flag|os.O_CREATE|os.O_WRONLY, 0o600)
+			require.NoError(t, err)
+			_, err = f.WriteString(contents)
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+		}
 
-	// One record is stamped in the future, for example from clock skew.
-	write("future.jsonl", prompt(now.Add(100*365*24*time.Hour), "future"), os.O_TRUNC)
-	write("normal.jsonl", prompt(now.Add(-10*time.Minute), "normal"), os.O_TRUNC)
+		// One record is stamped in the future, for example from clock skew.
+		write("future.jsonl", prompt(now.Add(100*365*24*time.Hour), "future"), os.O_TRUNC)
+		write("normal.jsonl", prompt(now.Add(-10*time.Minute), "normal"), os.O_TRUNC)
 
-	sync := func() Heartbeats {
-		var got Heartbeats
+		sync := func() Heartbeats {
+			var got Heartbeats
 
-		handler := WithAISync(Config{V: v})(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-			got = hh
-			return nil, nil
-		})
-		_, err := handler(t.Context(), nil)
-		require.NoError(t, err)
+			handler := WithAISync(Config{V: v})(func(
+				_ context.Context, hh []heartbeat.Heartbeat,
+			) ([]heartbeat.Result, error) {
+				got = hh
+				return nil, nil
+			})
+			_, err := handler(t.Context(), nil)
+			require.NoError(t, err)
 
-		return got
-	}
+			return got
+		}
 
-	require.NotEmpty(t, sync())
+		require.NotEmpty(t, sync())
 
-	// Later activity in an already tracked session must still be picked up. The
-	// future record must not make the next run look like a backfill request,
-	// which would reset every cutoff to now and drop this line.
-	write("normal.jsonl", prompt(now.Add(-30*time.Second), "normal"), os.O_APPEND)
+		// Later activity in an already tracked session must still be picked up. The
+		// future record must not make the next run look like a backfill request,
+		// which would reset every cutoff to now and drop this line.
+		write("normal.jsonl", prompt(now.Add(-30*time.Second), "normal"), os.O_APPEND)
 
-	var sessions []string
-	for _, h := range sync() {
-		sessions = append(sessions, h.AISession)
-	}
+		var sessions []string
+		for _, h := range sync() {
+			sessions = append(sessions, h.AISession)
+		}
 
-	assert.Contains(t, sessions, "normal")
+		assert.Contains(t, sessions, "normal")
+	})
 }
 
 func TestAISyncIndependentSessions(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
-	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
-	t.Setenv("FACTORY_DIR", filepath.Join(home, ".factory"))
+	runAISyncTest(t, func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+		t.Setenv("FACTORY_DIR", filepath.Join(home, ".factory"))
 
-	after := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
-	v := viper.New()
-	v.Set("internal-config", filepath.Join(home, "internal.cfg"))
-	v.Set("internal.ai_logs_last_parsed_at", after.Format(time.RFC3339Nano))
+		after := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
+		v := viper.New()
+		v.Set("internal-config", filepath.Join(home, "internal.cfg"))
+		v.Set("internal.ai_logs_last_parsed_at", after.Format(time.RFC3339Nano))
 
-	write := func(relative string, lines ...string) {
-		path := filepath.Join(home, filepath.FromSlash(relative))
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-		require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
-	}
-	claudePrompt := func(stamp, id string) string {
-		return `{"timestamp":"2026-09-01T` + stamp + `Z","sessionId":"` + id + `","type":"user",` +
-			`"message":{"role":"user","content":"continue"}}`
-	}
-	usage := `{"timestamp":"2026-09-01T12:30:00Z","sessionId":"slow","type":"assistant",` +
-		`"message":{"id":"msg-1","usage":{"input_tokens":10,"cache_read_input_tokens":20,"output_tokens":30}}}`
-	slowPath := ".claude/projects/project/slow.jsonl"
-	write(slowPath, claudePrompt("12:00:00", "slow"), usage)
-	// A session without any heartbeat must also retain its initial cutoff.
-	write(".claude/projects/project/pending.jsonl", strings.ReplaceAll(usage, "slow", "pending"))
-	write(".claude/projects/project/fast.jsonl", claudePrompt("12:45:00", "fast"))
+		write := func(relative string, lines ...string) {
+			path := filepath.Join(home, filepath.FromSlash(relative))
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+			require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+		}
+		claudePrompt := func(stamp, id string) string {
+			return `{"timestamp":"2026-09-01T` + stamp + `Z","sessionId":"` + id + `","type":"user",` +
+				`"message":{"role":"user","content":"continue"}}`
+		}
+		usage := `{"timestamp":"2026-09-01T12:30:00Z","sessionId":"slow","type":"assistant",` +
+			`"message":{"id":"msg-1","usage":{"input_tokens":10,"cache_read_input_tokens":20,"output_tokens":30}}}`
+		slowPath := ".claude/projects/project/slow.jsonl"
+		write(slowPath, claudePrompt("12:00:00", "slow"), usage)
+		// A session without any heartbeat must also retain its initial cutoff.
+		write(".claude/projects/project/pending.jsonl", strings.ReplaceAll(usage, "slow", "pending"))
+		write(".claude/projects/project/fast.jsonl", claudePrompt("12:45:00", "fast"))
 
-	meta := `{"timestamp":"2026-09-01T11:00:00Z","type":"session_meta","payload":{"id":"codex-session"}}`
-	codexPrompt := `{"timestamp":"2026-09-01T12:00:00Z","type":"event_msg",` +
-		`"payload":{"type":"user_message","message":"continue"}}`
-	write(".codex/sessions/session.jsonl", meta, codexPrompt)
-	write(".factory/sessions/session.jsonl", `{"timestamp":"2026-09-01T12:15:00Z","session_id":"generic",`+
-		`"role":"assistant","usage":{"input_tokens":3,"output_tokens":4}}`)
+		meta := `{"timestamp":"2026-09-01T11:00:00Z","type":"session_meta","payload":{"id":"codex-session"}}`
+		codexPrompt := `{"timestamp":"2026-09-01T12:00:00Z","type":"event_msg",` +
+			`"payload":{"type":"user_message","message":"continue"}}`
+		write(".codex/sessions/session.jsonl", meta, codexPrompt)
+		write(".factory/sessions/session.jsonl", `{"timestamp":"2026-09-01T12:15:00Z","session_id":"generic",`+
+			`"role":"assistant","usage":{"input_tokens":3,"output_tokens":4}}`)
 
-	sync := func() Heartbeats {
-		var got Heartbeats
+		sync := func() Heartbeats {
+			var got Heartbeats
 
-		handler := WithAISync(Config{V: v})(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-			got = hh
-			return nil, nil
-		})
-		_, err := handler(t.Context(), nil)
-		require.NoError(t, err)
+			handler := WithAISync(Config{V: v})(func(
+				_ context.Context, hh []heartbeat.Heartbeat,
+			) ([]heartbeat.Result, error) {
+				got = hh
+				return nil, nil
+			})
+			_, err := handler(t.Context(), nil)
+			require.NoError(t, err)
 
-		return got
-	}
-	first := sync()
-	require.NotEmpty(t, first)
-	require.Empty(t, sync(), "unchanged rerun must not resend boundary heartbeats")
+			return got
+		}
+		first := sync()
+		require.NotEmpty(t, first)
+		require.Empty(t, sync(), "unchanged rerun must not resend boundary heartbeats")
 
-	// Simulate another parser having advanced the global cutoff beyond these sessions.
-	require.NoError(t, UpdateLastParsedAt(t.Context(), v, after.Add(4*time.Hour)))
-	write(slowPath, claudePrompt("12:00:00", "slow"), usage, claudePrompt("13:00:00", "slow"))
-	write(".claude/projects/project/pending.jsonl", strings.ReplaceAll(usage, "slow", "pending"),
-		claudePrompt("13:00:00", "pending"))
+		// Simulate another parser having advanced the global cutoff beyond these sessions.
+		require.NoError(t, UpdateLastParsedAt(t.Context(), v, after.Add(4*time.Hour)))
+		write(slowPath, claudePrompt("12:00:00", "slow"), usage, claudePrompt("13:00:00", "slow"))
+		write(".claude/projects/project/pending.jsonl", strings.ReplaceAll(usage, "slow", "pending"),
+			claudePrompt("13:00:00", "pending"))
 
-	tokenCount := `{"timestamp":"2026-09-01T12:30:00Z","type":"event_msg",` +
-		`"payload":{"type":"token_count","info":{"total_token_usage":` +
-		`{"input_tokens":30,"cached_input_tokens":20,"output_tokens":30}}}}`
-	write(".codex/sessions/session.jsonl", meta, codexPrompt, tokenCount)
-	write(".factory/sessions/session.jsonl", `{"timestamp":"2026-09-01T12:15:00Z","session_id":"generic",`+
-		`"role":"assistant","usage":{"input_tokens":3,"output_tokens":4}}`,
-		`{"timestamp":"2026-09-01T12:30:00Z","session_id":"generic",`+
-			`"role":"assistant","usage":{"input_tokens":10,"cache_read_input_tokens":20,"output_tokens":30}}`)
+		tokenCount := `{"timestamp":"2026-09-01T12:30:00Z","type":"event_msg",` +
+			`"payload":{"type":"token_count","info":{"total_token_usage":` +
+			`{"input_tokens":30,"cached_input_tokens":20,"output_tokens":30}}}}`
+		write(".codex/sessions/session.jsonl", meta, codexPrompt, tokenCount)
+		write(".factory/sessions/session.jsonl", `{"timestamp":"2026-09-01T12:15:00Z","session_id":"generic",`+
+			`"role":"assistant","usage":{"input_tokens":3,"output_tokens":4}}`,
+			`{"timestamp":"2026-09-01T12:30:00Z","session_id":"generic",`+
+				`"role":"assistant","usage":{"input_tokens":10,"cache_read_input_tokens":20,"output_tokens":30}}`)
 
-	second := sync()
+		second := sync()
 
-	totals := make(map[string][3]int64)
-	for _, h := range second {
-		sum := totals[h.AISession]
-		sum[0] += h.AIInputTokens
-		sum[1] += h.AICachedInputTokens
-		sum[2] += h.AIOutputTokens
-		totals[h.AISession] = sum
-	}
-
-	for _, id := range []string{"slow", "pending", "codex-session", "generic"} {
-		assert.Equal(t, [3]int64{10, 20, 30}, totals[id], "session %s", id)
-	}
-
-	assert.Empty(t, sync())
-	persisted, err := getSyncLastParsedAt(t.Context(), v)
-	require.NoError(t, err)
-	assert.Equal(t, after.Add(4*time.Hour), persisted, "older sessions cannot move the global cutoff backward")
-
-	raw, err := os.ReadFile(filepath.Join(home, "internal-ai-parsing.json"))
-	require.NoError(t, err)
-
-	var state syncCheckpoints
-	require.NoError(t, json.Unmarshal(raw, &state))
-	assert.Contains(t, state.Parsers, "Claude")
-	assert.Contains(t, state.Parsers, "Codex")
-	assert.Contains(t, state.Parsers, "Droid")
-
-	// Incremental sync and one complete replay must produce the same totals.
-	v.Set("internal-config", filepath.Join(home, "replay.cfg"))
-
-	replayed := sync()
-	tokenTotals := func(hh Heartbeats) [3]int64 {
-		var totals [3]int64
-		for _, h := range hh {
-			totals[0] += h.AIInputTokens
-			totals[1] += h.AICachedInputTokens
-			totals[2] += h.AIOutputTokens
+		totals := make(map[string][3]int64)
+		for _, h := range second {
+			sum := totals[h.AISession]
+			sum[0] += h.AIInputTokens
+			sum[1] += h.AICachedInputTokens
+			sum[2] += h.AIOutputTokens
+			totals[h.AISession] = sum
 		}
 
-		return totals
-	}
-	assert.Equal(t, tokenTotals(replayed), tokenTotals(append(first, second...)))
+		for _, id := range []string{"slow", "pending", "codex-session", "generic"} {
+			assert.Equal(t, [3]int64{10, 20, 30}, totals[id], "session %s", id)
+		}
+
+		assert.Empty(t, sync())
+		persisted, err := getSyncLastParsedAt(t.Context(), v)
+		require.NoError(t, err)
+		assert.Equal(t, after.Add(4*time.Hour), persisted, "older sessions cannot move the global cutoff backward")
+
+		raw, err := os.ReadFile(filepath.Join(home, "internal-ai-parsing.json"))
+		require.NoError(t, err)
+
+		var state syncCheckpoints
+		require.NoError(t, json.Unmarshal(raw, &state))
+		assert.Contains(t, state.Parsers, "Claude")
+		assert.Contains(t, state.Parsers, "Codex")
+		assert.Contains(t, state.Parsers, "Droid")
+
+		// Incremental sync and one complete replay must produce the same totals.
+		v.Set("internal-config", filepath.Join(home, "replay.cfg"))
+
+		replayed := sync()
+		tokenTotals := func(hh Heartbeats) [3]int64 {
+			var totals [3]int64
+			for _, h := range hh {
+				totals[0] += h.AIInputTokens
+				totals[1] += h.AICachedInputTokens
+				totals[2] += h.AIOutputTokens
+			}
+
+			return totals
+		}
+		assert.Equal(t, tokenTotals(replayed), tokenTotals(append(first, second...)))
+	})
+}
+
+func runAISyncTest(t *testing.T, run func(*testing.T)) {
+	t.Helper()
+
+	now := time.Now().UTC()
+
+	// Keep filesystem latency outside the AI sync lock deadline.
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		run(t)
+	})
 }

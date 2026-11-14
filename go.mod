@@ -7,6 +7,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/danwakefield/fnmatch v0.0.0-20160403171240-cbb64ac3d964
 	github.com/dlclark/regexp2 v1.12.0
+	github.com/dlclark/regexp2/v2 v2.8.4
 	github.com/gandarez/go-olson-timezone v0.1.0
 	github.com/gandarez/go-realpath v1.0.0
 	github.com/go-viper/encoding/ini v0.1.1
@@ -33,7 +34,6 @@ require (
 )
 
 require (
-	github.com/dlclark/regexp2/v2 v2.8.4 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
