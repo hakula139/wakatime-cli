@@ -111,29 +111,21 @@ func detectSpecialCases(ctx context.Context, fp string) (heartbeat.Language, boo
 	switch file {
 	case "go.mod":
 		return heartbeat.LanguageGo, true
-	case "CMmakeLists.txt":
+	case "CMakeLists.txt":
 		return heartbeat.LanguageCMake, true
 	}
 
-	// nolint
-	if strings.HasPrefix(ext, ".h") || strings.HasPrefix(ext, ".c") {
-		if correspondingFileExists(fp, ".c") {
+	if ext == ".c" || ext == ".h" || isCPPExtension(ext) {
+		switch {
+		case correspondingFileExists(fp, ".c"):
 			return heartbeat.LanguageC, true
-		}
-
-		if correspondingFileExists(fp, ".m") {
+		case correspondingFileExists(fp, ".m"):
 			return heartbeat.LanguageObjectiveC, true
-		}
-
-		if correspondingFileExists(fp, ".mm") {
+		case correspondingFileExists(fp, ".mm"):
 			return heartbeat.LanguageObjectiveCPP, true
-		}
-
-		if folderContainsCPPFiles(ctx, dir) {
+		case folderContainsCPPFiles(ctx, dir):
 			return heartbeat.LanguageCPP, true
-		}
-
-		if folderContainsCFiles(ctx, dir) {
+		case folderContainsCFiles(ctx, dir):
 			return heartbeat.LanguageC, true
 		}
 	}
@@ -229,16 +221,22 @@ func folderContainsCPPFiles(ctx context.Context, dir string) bool {
 		return false
 	}
 
-	cppExtensions := []string{".cpp", ".hpp", ".c++", ".h++", ".cc", ".hh", ".cxx", ".hxx", ".C", ".H", ".cp", ".CPP"}
-	for _, cppExt := range cppExtensions {
-		for _, e := range extensions {
-			if e == cppExt {
-				return true
-			}
+	for _, ext := range extensions {
+		if isCPPExtension(ext) {
+			return true
 		}
 	}
 
 	return false
+}
+
+func isCPPExtension(ext string) bool {
+	switch ext {
+	case ".cc", ".hh", ".cpp", ".hpp", ".cxx", ".hxx", ".c++", ".h++", ".cp":
+		return true
+	default:
+		return false
+	}
 }
 
 // folderContainsDelphiFiles returns true, if filder contains Delphi files.
