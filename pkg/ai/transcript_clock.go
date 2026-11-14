@@ -79,7 +79,7 @@ func (c *transcriptClock) resolve(key string, timestamp time.Time) time.Time {
 
 func (c *transcriptClock) normalize(line []byte) []byte {
 	var value map[string]any
-	if json.Unmarshal(line, &value) != nil {
+	if json.Unmarshal(line, &value) != nil || value == nil {
 		return line
 	}
 

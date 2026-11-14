@@ -77,6 +77,7 @@ func TestQwenCodeParse(t *testing.T) {
 				"candidatesTokenCount": 1,
 			},
 		}),
+		"null",
 		record(map[string]interface{}{
 			"type":      "user",
 			"timestamp": "2026-05-30T11:59:00Z",

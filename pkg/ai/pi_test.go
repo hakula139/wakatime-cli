@@ -41,6 +41,7 @@ func TestPiParse(t *testing.T) {
 			"timestamp": "2026-04-19T12:00:00.000Z",
 			"cwd":       projectDir,
 		}),
+		"null",
 		mustJSONLine(t, map[string]interface{}{
 			"type":      "model_change",
 			"id":        "a1",
