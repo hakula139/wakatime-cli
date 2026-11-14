@@ -73,6 +73,7 @@ func TestWithAISyncUpdatesLastParsedAtBeforeNext(t *testing.T) {
 	realCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	// Initialize Done before entering the bubble so its external timer can close the channel.
 	_ = realCtx.Done()
+
 	defer cancel()
 
 	runAISyncTest(t, func(t *testing.T) {
@@ -178,6 +179,7 @@ func TestWithAISyncReleasesLockOnRecoveredPanic(t *testing.T) {
 	realCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	// Initialize Done before entering the bubble so its external timer can close the channel.
 	_ = realCtx.Done()
+
 	defer cancel()
 
 	runAISyncTest(t, func(t *testing.T) {
@@ -1068,7 +1070,9 @@ func TestWithAISync_PreservesCopilotTokensAfterMergingAppHeartbeat(t *testing.T)
 		t.Setenv("USERPROFILE", home)
 		t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 
-		workspaceDir := filepath.Join(home, "Library", "Application Support", "Code", "User", "workspaceStorage", "workspace-1")
+		workspaceDir := filepath.Join(
+			home, "Library", "Application Support", "Code", "User", "workspaceStorage", "workspace-1",
+		)
 		require.NoError(t, os.MkdirAll(filepath.Join(workspaceDir, "chatSessions"), 0o755))
 		require.NoError(t, os.MkdirAll(filepath.Join(workspaceDir, "chatEditingSessions", "session-1"), 0o755))
 
@@ -1256,6 +1260,7 @@ func runAISyncTest(t *testing.T, run func(*testing.T)) {
 	// Keep filesystem latency outside the AI sync lock deadline.
 	synctest.Test(t, func(t *testing.T) {
 		time.Sleep(time.Until(now))
+
 		defer regexp2.StopTimeoutClock()
 
 		run(t)
@@ -1354,7 +1359,10 @@ func TestWithAISyncExcludedPathsPreserveHumanHeartbeats(t *testing.T) {
 
 				v := viper.New()
 				v.Set("internal-config", tmpInternal.Name())
-				v.Set("internal.ai_logs_last_parsed_at", time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC).Format(ini.DateFormat))
+				v.Set(
+					"internal.ai_logs_last_parsed_at",
+					time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC).Format(ini.DateFormat),
+				)
 
 				handle := ai.WithAISync(ai.Config{
 					V: v,

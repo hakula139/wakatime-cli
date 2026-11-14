@@ -268,7 +268,9 @@ func TestAISyncFutureTimestampDoesNotWipeCheckpoints(t *testing.T) {
 		sync := func() Heartbeats {
 			var got Heartbeats
 
-			handler := WithAISync(Config{V: v})(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+			handler := WithAISync(Config{V: v})(func(
+				_ context.Context, hh []heartbeat.Heartbeat,
+			) ([]heartbeat.Result, error) {
 				got = hh
 				return nil, nil
 			})
@@ -336,7 +338,9 @@ func TestAISyncIndependentSessions(t *testing.T) {
 		sync := func() Heartbeats {
 			var got Heartbeats
 
-			handler := WithAISync(Config{V: v})(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+			handler := WithAISync(Config{V: v})(func(
+				_ context.Context, hh []heartbeat.Heartbeat,
+			) ([]heartbeat.Result, error) {
 				got = hh
 				return nil, nil
 			})

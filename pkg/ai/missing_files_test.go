@@ -54,7 +54,9 @@ func TestWithAISync_DeletedFiles(t *testing.T) {
 
 						if provider == "Codex" {
 							dir = filepath.Join(home, ".codex", "sessions", "2026", "06", "20")
-							patchType := map[string]string{"delete": "Delete", "create": "Add", "update": "Update"}[operation]
+							patchType := map[string]string{
+								"delete": "Delete", "create": "Add", "update": "Update",
+							}[operation]
 							patch, err := json.Marshal(
 								"*** Begin Patch\n*** " + patchType + " File: " + entity + "\n*** End Patch",
 							)
