@@ -248,6 +248,22 @@ jobs:
         name: IP Check
         run: make test-ip
 
+  nix:
+    name: Nix (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        uses: hakula139/devkit/.github/actions/setup-nix@v3
+      -
+        name: Check package
+        run: nix flake check --print-build-logs
+
   result:
     name: CI Result
     # A skipped required check passes, so the gate must run after failures too.
@@ -262,6 +278,7 @@ jobs:
       - test-integration-macos
       - test-shell-script
       - ip-check
+      - nix
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
