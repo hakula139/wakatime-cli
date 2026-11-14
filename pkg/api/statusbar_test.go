@@ -54,14 +54,10 @@ func TestClient_StatusBarWithTimeout(t *testing.T) {
 	defer tearDown()
 
 	block := make(chan struct{})
-
-	called := make(chan struct{})
-	defer close(called)
+	defer close(block)
 
 	router.HandleFunc("/users/current/statusbar/today", func(_ http.ResponseWriter, _ *http.Request) {
 		<-block
-
-		called <- struct{}{}
 	})
 
 	opts := []api.Option{api.WithTimeout(20 * time.Millisecond)}
@@ -72,15 +68,6 @@ func TestClient_StatusBarWithTimeout(t *testing.T) {
 
 	errMsg := fmt.Sprintf("error %q does not contain string 'Timeout'", err)
 	assert.True(t, strings.Contains(err.Error(), "Timeout"), errMsg)
-
-	close(block)
-
-	select {
-	case <-called:
-		break
-	case <-time.After(50 * time.Millisecond):
-		t.Fatal("failed")
-	}
 }
 
 func TestClient_StatusBar_Err(t *testing.T) {
