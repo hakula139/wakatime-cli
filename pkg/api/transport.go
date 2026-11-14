@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/wakatime/wakatime-cli/pkg/log"
+
+	"github.com/Azure/go-ntlmssp"
 )
 
 const (
@@ -110,6 +112,48 @@ func NewTransportWithHostVerificationDisabled(ctx context.Context) *http.Transpo
 	}
 
 	return t
+}
+
+func dnsFallbackTransport(ctx context.Context, current http.RoundTripper) http.RoundTripper {
+	var (
+		transport  *http.Transport
+		negotiator *ntlmssp.Negotiator
+	)
+
+	switch current := current.(type) {
+	case *http.Transport:
+		transport = current.Clone()
+	case ntlmssp.Negotiator:
+		inner, ok := current.RoundTripper.(*http.Transport)
+		if !ok {
+			return nil
+		}
+
+		transport = inner.Clone()
+		negotiator = &current
+	default:
+		return nil
+	}
+
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+
+	if transport.TLSClientConfig.RootCAs == nil {
+		transport.TLSClientConfig.RootCAs = CACerts(ctx)
+	}
+
+	transport.TLSClientConfig.ServerName = serverName
+
+	if negotiator != nil {
+		negotiator.RoundTripper = transport
+
+		return *negotiator
+	}
+
+	return transport
 }
 
 // LazyCreateNewTransport uses the client's Transport if exists, or creates a new one.

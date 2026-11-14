@@ -66,35 +66,46 @@ func NewClient(baseURL string, opts ...Option) *Client {
 // the request behavior of the api client.
 func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	resp, err := c.doFunc(c, req)
-	if err != nil {
-		if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Hostname(), serverName) ||
-			(req.URL.Port() != "" && req.URL.Port() != "443") {
-			return nil, err
-		}
-
-		var dnsError *net.DNSError
-		if !errors.As(err, &dnsError) {
-			return nil, err
-		}
-
-		c.client = &http.Client{
-			Transport: NewTransportWithHostVerificationDisabled(ctx),
-		}
-
-		req.URL.Host = BaseIPAddrv4
-		if isLocalIPv6(ctx) {
-			req.URL.Host = BaseIPAddrv6
-		}
-
-		logger := log.Extract(ctx)
-		logger.Debugf("dns error, will retry with host ip '%s': %s", req.URL.Host, err)
-
-		resp, errRetry := c.doFunc(c, req)
-		if errRetry != nil {
-			return nil, fmt.Errorf("retry request failed: %s. original error: %s", errRetry, err)
-		}
-
+	if err == nil {
 		return resp, nil
+	}
+
+	if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Hostname(), serverName) ||
+		(req.URL.Port() != "" && req.URL.Port() != "443") {
+		return nil, err
+	}
+
+	var dnsError *net.DNSError
+	if !errors.As(err, &dnsError) {
+		return nil, err
+	}
+
+	transport := dnsFallbackTransport(ctx, c.client.Transport)
+	if transport == nil {
+		return nil, err
+	}
+
+	reqRetry, cloneErr := cloneRequest(req)
+	if cloneErr != nil {
+		return nil, err
+	}
+
+	clientRetry := *c
+	httpClientRetry := *c.client
+	httpClientRetry.Transport = transport
+	clientRetry.client = &httpClientRetry
+
+	reqRetry.URL.Host = BaseIPAddrv4
+	if isLocalIPv6(ctx) {
+		reqRetry.URL.Host = "[" + BaseIPAddrv6 + "]"
+	}
+
+	logger := log.Extract(ctx)
+	logger.Debugf("dns error, will retry with host ip '%s': %s", reqRetry.URL.Host, err)
+
+	resp, errRetry := clientRetry.doFunc(&clientRetry, reqRetry)
+	if errRetry != nil {
+		return nil, fmt.Errorf("retry request failed: %s. original error: %s", errRetry, err)
 	}
 
 	return resp, nil
