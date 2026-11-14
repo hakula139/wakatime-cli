@@ -111,12 +111,12 @@ func detectSpecialCases(ctx context.Context, fp string) (heartbeat.Language, boo
 	switch file {
 	case "go.mod":
 		return heartbeat.LanguageGo, true
-	case "CMmakeLists.txt":
+	case "CMakeLists.txt":
 		return heartbeat.LanguageCMake, true
 	}
 
-	// nolint
-	if strings.HasPrefix(ext, ".h") || strings.HasPrefix(ext, ".c") {
+	switch ext {
+	case ".c", ".h", ".cc", ".hh", ".cpp", ".hpp", ".cxx", ".hxx", ".c++", ".h++", ".cp":
 		if correspondingFileExists(fp, ".c") {
 			return heartbeat.LanguageC, true
 		}
