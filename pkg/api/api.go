@@ -24,8 +24,9 @@ const (
 
 // Client communicates with the wakatime api.
 type Client struct {
-	baseURL string
-	client  *http.Client
+	baseURL        string
+	client         *http.Client
+	ntlmAuthHeader string
 	// doFunc allows api client options to manipulate request/response handling.
 	// default function will be set in constructor.
 	//

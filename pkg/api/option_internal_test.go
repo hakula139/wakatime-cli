@@ -94,6 +94,36 @@ func TestSendHeartbeatsCustomDestinationDoesNotFallback(t *testing.T) {
 	}
 }
 
+func TestNTLMRetryStopsAfterSecondFailure(t *testing.T) {
+	client := NewClient("https://example.com")
+	originalTransport := client.client.Transport
+
+	var calls int
+
+	client.doFunc = func(*Client, *http.Request) (*http.Response, error) {
+		calls++
+		if calls > 2 {
+			panic("unexpected third attempt")
+		}
+
+		return nil, errors.New("network unavailable")
+	}
+	option, err := WithNTLMRequestRetry(t.Context(), `EXAMPLE\\user:password`)
+	require.NoError(t, err)
+	option(client)
+
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	require.NoError(t, err)
+
+	assert.NotPanics(t, func() {
+		err = doAndClose(t, client, req)
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, 2, calls)
+	assert.Same(t, originalTransport, client.client.Transport)
+}
+
 func TestClientDoDNSFallbackRetryError(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, BaseURL+"/users/current", nil)
 	require.NoError(t, err)
