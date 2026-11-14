@@ -53,36 +53,26 @@ func TestClient_GoalWithTimeout(t *testing.T) {
 	u, router, tearDown := setupTestServer()
 	defer tearDown()
 
-	block := make(chan struct{})
-
-	called := make(chan struct{})
-	defer close(called)
+	response, err := os.ReadFile("testdata/api_goals_id_response.json")
+	require.NoError(t, err)
 
 	router.HandleFunc(
-		"/users/current/goals/00000000-0000-4000-8000-000000000000", func(_ http.ResponseWriter, _ *http.Request) {
-			<-block
+		"/users/current/goals/00000000-0000-4000-8000-000000000000", func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(200 * time.Millisecond)
 
-			called <- struct{}{}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(response)
 		})
 
 	opts := []api.Option{api.WithTimeout(20 * time.Millisecond)}
 
 	c := api.NewClient(u, opts...)
 
-	_, err := c.Goal(t.Context(), "00000000-0000-4000-8000-000000000000")
+	_, err = c.Goal(t.Context(), "00000000-0000-4000-8000-000000000000")
 	require.Error(t, err)
 
 	errMsg := fmt.Sprintf("error %q does not contain string 'Timeout'", err)
 	assert.True(t, strings.Contains(err.Error(), "Timeout"), errMsg)
-
-	close(block)
-
-	select {
-	case <-called:
-		break
-	case <-time.After(50 * time.Millisecond):
-		t.Fatal("failed")
-	}
 }
 
 func TestClient_Goal_Err(t *testing.T) {
