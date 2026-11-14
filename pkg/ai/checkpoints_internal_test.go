@@ -169,46 +169,48 @@ func TestSyncCheckpointQuietSessionDoesNotLowerDiscovery(t *testing.T) {
 }
 
 func TestAISyncSQLiteParsersDoNotUseCheckpoints(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	runAISyncTest(t, func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
 
-	v := viper.New()
-	v.Set("internal-config", filepath.Join(home, "internal.cfg"))
-	v.Set("internal.ai_logs_last_parsed_at", time.Now().Add(-time.Hour).Format(time.RFC3339Nano))
+		v := viper.New()
+		v.Set("internal-config", filepath.Join(home, "internal.cfg"))
+		v.Set("internal.ai_logs_last_parsed_at", time.Now().Add(-time.Hour).Format(time.RFC3339Nano))
 
-	sqliteParsers := []string{
-		(Gemini{}).Name(), (Cody{}).Name(), (Copilot{}).Name(), (Cursor{}).Name(), (Goose{}).Name(),
-		(OpenCode{}).Name(), (Qoder{}).Name(), (Windsurf{}).Name(), (Crush{}).Name(), (CursorAgent{}).Name(),
-		(Forge{}).Name(), (Hermes{}).Name(), (KiloCode{}).Name(), (QuickDesk{}).Name(), (Warp{}).Name(),
-		(ZCode{}).Name(), (Zed{}).Name(),
-	}
+		sqliteParsers := []string{
+			(Gemini{}).Name(), (Cody{}).Name(), (Copilot{}).Name(), (Cursor{}).Name(), (Goose{}).Name(),
+			(OpenCode{}).Name(), (Qoder{}).Name(), (Windsurf{}).Name(), (Crush{}).Name(), (CursorAgent{}).Name(),
+			(Forge{}).Name(), (Hermes{}).Name(), (KiloCode{}).Name(), (QuickDesk{}).Name(), (Warp{}).Name(),
+			(ZCode{}).Name(), (Zed{}).Name(),
+		}
 
-	// State left behind by an earlier build that checkpointed a sqlite parser,
-	// including its row cursors.
-	statePath := filepath.Join(home, "internal-ai-parsing.json")
-	stale := `{"version":1,"parsers":{"` + (Zed{}).Name() + `":{"cutoff":"2026-09-01T12:00:00Z",` +
-		`"sessions":{},"cursors":{"/tmp/cursor.json":{"Version":2}}}}}`
-	require.NoError(t, os.WriteFile(statePath, []byte(stale), 0o600))
+		// State left behind by an earlier build that checkpointed a sqlite parser,
+		// including its row cursors.
+		statePath := filepath.Join(home, "internal-ai-parsing.json")
+		stale := `{"version":1,"parsers":{"` + (Zed{}).Name() + `":{"cutoff":"2026-09-01T12:00:00Z",` +
+			`"sessions":{},"cursors":{"/tmp/cursor.json":{"Version":2}}}}}`
+		require.NoError(t, os.WriteFile(statePath, []byte(stale), 0o600))
 
-	handler := WithAISync(Config{V: v})(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-		return nil, nil
+		handler := WithAISync(Config{V: v})(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+			return nil, nil
+		})
+		_, err := handler(t.Context(), nil)
+		require.NoError(t, err)
+
+		raw, err := os.ReadFile(statePath)
+		require.NoError(t, err)
+
+		var state syncCheckpoints
+		require.NoError(t, json.Unmarshal(raw, &state))
+		assert.Contains(t, state.Parsers, (Claude{}).Name())
+
+		for _, name := range sqliteParsers {
+			assert.NotContains(t, state.Parsers, name, "sqlite parser %s must not be checkpointed", name)
+		}
+
+		assert.NotContains(t, string(raw), "cursors")
 	})
-	_, err := handler(t.Context(), nil)
-	require.NoError(t, err)
-
-	raw, err := os.ReadFile(statePath)
-	require.NoError(t, err)
-
-	var state syncCheckpoints
-	require.NoError(t, json.Unmarshal(raw, &state))
-	assert.Contains(t, state.Parsers, (Claude{}).Name())
-
-	for _, name := range sqliteParsers {
-		assert.NotContains(t, state.Parsers, name, "sqlite parser %s must not be checkpointed", name)
-	}
-
-	assert.NotContains(t, string(raw), "cursors")
 }
 
 func TestClaudeTranscriptPrefixUsesPrefixedSessionCutoff(t *testing.T) {
@@ -233,69 +235,67 @@ func TestClaudeTranscriptPrefixUsesPrefixedSessionCutoff(t *testing.T) {
 }
 
 func TestAISyncFutureTimestampDoesNotWipeCheckpoints(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	runAISyncTest(t, func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 
-	now := time.Now().UTC()
-	v := viper.New()
-	v.Set("internal-config", filepath.Join(home, "internal.cfg"))
-	v.Set("internal.ai_logs_last_parsed_at", now.Add(-time.Hour).Format(time.RFC3339Nano))
+		now := time.Now().UTC()
+		v := viper.New()
+		v.Set("internal-config", filepath.Join(home, "internal.cfg"))
+		v.Set("internal.ai_logs_last_parsed_at", now.Add(-time.Hour).Format(time.RFC3339Nano))
 
-	prompt := func(stamp time.Time, id string) string {
-		return `{"timestamp":"` + stamp.Format(time.RFC3339Nano) + `","sessionId":"` + id + `","type":"user",` +
-			`"message":{"role":"user","content":"continue"}}` + "\n"
-	}
-	write := func(name, contents string, flag int) {
-		path := filepath.Join(home, ".claude", "projects", "project", name)
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		prompt := func(stamp time.Time, id string) string {
+			return `{"timestamp":"` + stamp.Format(time.RFC3339Nano) + `","sessionId":"` + id + `","type":"user",` +
+				`"message":{"role":"user","content":"continue"}}` + "\n"
+		}
+		write := func(name, contents string, flag int) {
+			path := filepath.Join(home, ".claude", "projects", "project", name)
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 
-		f, err := os.OpenFile(path, flag|os.O_CREATE|os.O_WRONLY, 0o600)
-		require.NoError(t, err)
-		_, err = f.WriteString(contents)
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
-	}
+			f, err := os.OpenFile(path, flag|os.O_CREATE|os.O_WRONLY, 0o600)
+			require.NoError(t, err)
+			_, err = f.WriteString(contents)
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+		}
 
-	// One record is stamped in the future, for example from clock skew.
-	write("future.jsonl", prompt(now.Add(100*365*24*time.Hour), "future"), os.O_TRUNC)
-	write("normal.jsonl", prompt(now.Add(-10*time.Minute), "normal"), os.O_TRUNC)
+		// One record is stamped in the future, for example from clock skew.
+		write("future.jsonl", prompt(now.Add(100*365*24*time.Hour), "future"), os.O_TRUNC)
+		write("normal.jsonl", prompt(now.Add(-10*time.Minute), "normal"), os.O_TRUNC)
 
-	sync := func() Heartbeats {
-		var got Heartbeats
+		sync := func() Heartbeats {
+			var got Heartbeats
 
-		handler := WithAISync(Config{V: v})(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-			got = hh
-			return nil, nil
-		})
-		_, err := handler(t.Context(), nil)
-		require.NoError(t, err)
+			handler := WithAISync(Config{V: v})(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+				got = hh
+				return nil, nil
+			})
+			_, err := handler(t.Context(), nil)
+			require.NoError(t, err)
 
-		return got
-	}
+			return got
+		}
 
-	require.NotEmpty(t, sync())
+		require.NotEmpty(t, sync())
 
-	// Later activity in an already tracked session must still be picked up. The
-	// future record must not make the next run look like a backfill request,
-	// which would reset every cutoff to now and drop this line.
-	write("normal.jsonl", prompt(now.Add(-30*time.Second), "normal"), os.O_APPEND)
+		// Later activity in an already tracked session must still be picked up. The
+		// future record must not make the next run look like a backfill request,
+		// which would reset every cutoff to now and drop this line.
+		write("normal.jsonl", prompt(now.Add(-30*time.Second), "normal"), os.O_APPEND)
 
-	var sessions []string
-	for _, h := range sync() {
-		sessions = append(sessions, h.AISession)
-	}
+		var sessions []string
+		for _, h := range sync() {
+			sessions = append(sessions, h.AISession)
+		}
 
-	assert.Contains(t, sessions, "normal")
+		assert.Contains(t, sessions, "normal")
+	})
 }
 
 func TestAISyncIndependentSessions(t *testing.T) {
-	// Filesystem latency must not consume the AI sync lock deadline.
-	synctest.Test(t, func(t *testing.T) {
-		// The default virtual clock predates these checkpoint fixtures.
-		time.Sleep(time.Until(time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)))
-
+	runAISyncTest(t, func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
@@ -408,5 +408,17 @@ func TestAISyncIndependentSessions(t *testing.T) {
 			return totals
 		}
 		assert.Equal(t, tokenTotals(replayed), tokenTotals(append(first, second...)))
+	})
+}
+
+func runAISyncTest(t *testing.T, run func(*testing.T)) {
+	t.Helper()
+
+	now := time.Now().UTC()
+
+	// Keep filesystem latency outside the AI sync lock deadline.
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		run(t)
 	})
 }

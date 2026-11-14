@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"testing/synctest"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -29,8 +28,7 @@ func TestWithAISync_DeletedFiles(t *testing.T) {
 				}
 
 				t.Run(name, func(t *testing.T) {
-					// Filesystem latency must not consume the AI sync lock deadline.
-					synctest.Test(t, func(t *testing.T) {
+					runAISyncTest(t, func(t *testing.T) {
 						home := t.TempDir()
 						t.Setenv("HOME", home)
 						t.Setenv("USERPROFILE", home)
