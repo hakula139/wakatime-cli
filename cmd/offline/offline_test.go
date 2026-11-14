@@ -61,44 +61,48 @@ func TestSaveHeartbeats(t *testing.T) {
 }
 
 func TestSaveHeartbeatsWithParams(t *testing.T) {
-	tmpFile, err := os.CreateTemp(t.TempDir(), "")
-	require.NoError(t, err)
-
-	defer tmpFile.Close()
-
-	offlineQueueFile, err := os.CreateTemp(t.TempDir(), "")
-	require.NoError(t, err)
-
-	defer offlineQueueFile.Close()
-
-	ctx := t.Context()
-
 	v := viper.New()
-	v.Set("config", tmpFile.Name())
+	config := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.WriteFile(config, nil, 0600))
+	v.Set("config", config)
 	v.Set("entity", "testdata/main.go")
 	v.Set("key", "00000000-0000-4000-8000-000000000000")
-	v.Set("project", "wakatime-cli")
+	v.Set("project", "example")
 
-	hh, err := testBuildHeartbeats(ctx, v)
+	hh, err := testBuildHeartbeats(t.Context(), v)
 	require.NoError(t, err)
-
-	apiParams, err := params.LoadAPIParams(ctx, v, params.FlagReadOrderFlagPrecedence)
+	apiParams, err := params.LoadAPIParams(t.Context(), v, params.FlagReadOrderFlagPrecedence)
 	require.NoError(t, err)
-
-	heartbeatParams, err := params.LoadHeartbeatParams(ctx, v, params.FlagReadOrderFlagPrecedence)
+	heartbeatParams, err := params.LoadHeartbeatParams(t.Context(), v, params.FlagReadOrderFlagPrecedence)
 	require.NoError(t, err)
-
-	err = cmdoffline.SaveHeartbeatsWithParams(ctx, v, offlineQueueFile.Name(), hh, params.Params{
+	loaded := params.Params{
 		API:       apiParams,
 		Heartbeat: heartbeatParams,
-		Offline:   params.LoadOfflineParams(ctx, v, params.FlagReadOrderFlagPrecedence),
-	})
-	require.NoError(t, err)
+		Offline:   params.LoadOfflineParams(t.Context(), v, params.FlagReadOrderFlagPrecedence),
+	}
 
-	offlineCount, err := offline.CountHeartbeats(ctx, offlineQueueFile.Name())
-	require.NoError(t, err)
+	for _, test := range []struct {
+		name      string
+		path      string
+		wantError bool
+	}{
+		{name: "saved despite noop sender", path: filepath.Join(t.TempDir(), "queue.db")},
+		{name: "queue is a directory", path: t.TempDir(), wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := cmdoffline.SaveHeartbeatsWithParams(t.Context(), v, test.path, hh, loaded)
 
-	assert.Equal(t, 1, offlineCount)
+			if test.wantError {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			count, err := offline.CountHeartbeats(t.Context(), test.path)
+			require.NoError(t, err)
+			assert.Equal(t, 1, count)
+		})
+	}
 }
 
 func TestSaveHeartbeats_ExtraHeartbeats(t *testing.T) {

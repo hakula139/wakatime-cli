@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/wakatime/wakatime-cli/cmd/handler"
-	"github.com/wakatime/wakatime-cli/pkg/api"
 	"github.com/wakatime/wakatime-cli/pkg/filter"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/log"
@@ -15,6 +14,8 @@ import (
 
 	"github.com/spf13/viper"
 )
+
+var errSkipSending = errors.New("skip sending heartbeats and only save to offline db")
 
 // SaveHeartbeats saves heartbeats to the offline db without trying to send to the API.
 // Used when we have more heartbeats than `offline.SendLimit`, when we couldn't send
@@ -64,10 +65,6 @@ func saveHeartbeats(
 		return nil
 	}
 
-	if params.Offline.Disabled {
-		return errors.New("saving to offline db disabled")
-	}
-
 	handleOpts := initHandleOptions()
 	sender := heartbeat.NewHandle(Noop{}, filter.WithLengthValidator(), offline.WithQueue(queueFilepath))
 	handle := handler.New(v, handler.Config{
@@ -76,7 +73,10 @@ func saveHeartbeats(
 		Opts:         handleOpts,
 	})(sender)
 
-	_, _ = handle(ctx, heartbeats)
+	_, err := handle(ctx, heartbeats)
+	if err != nil && !errors.Is(err, errSkipSending) {
+		return err
+	}
 
 	return nil
 }
@@ -151,7 +151,5 @@ type Noop struct{}
 
 // SendHeartbeats always returns an error.
 func (Noop) SendHeartbeats(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-	return nil, api.Err{
-		Err: errors.New("skip sending heartbeats and only save to offline db"),
-	}
+	return nil, errSkipSending
 }
