@@ -121,15 +121,14 @@ func TestClient_SendHeartbeats_Timeout(t *testing.T) {
 	url, router, tearDown := setupTestServer()
 	defer tearDown()
 
+	response, err := os.ReadFile("testdata/api_heartbeats_response.json")
+	require.NoError(t, err)
+
 	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 
-		response, err := os.ReadFile("testdata/api_heartbeats_response.json")
-		require.NoError(t, err)
-
 		w.WriteHeader(http.StatusCreated)
-		_, err = w.Write(response)
-		require.NoError(t, err)
+		_, _ = w.Write(response)
 	})
 
 	c := api.NewClient(url, api.WithTimeout(100*time.Millisecond))
