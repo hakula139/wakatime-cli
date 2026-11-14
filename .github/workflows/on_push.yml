@@ -264,6 +264,10 @@ jobs:
         name: Check package
         run: nix flake check --print-build-logs
 
+  portable-release:
+    name: Portable Release
+    uses: ./.github/workflows/release-build.yml
+
   result:
     name: CI Result
     # A skipped required check passes, so the gate must run after failures too.
@@ -279,6 +283,7 @@ jobs:
       - test-shell-script
       - ip-check
       - nix
+      - portable-release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
