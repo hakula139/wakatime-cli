@@ -60,6 +60,50 @@ func TestSaveHeartbeats(t *testing.T) {
 	assert.Equal(t, 1, offlineCount)
 }
 
+func TestSaveHeartbeatsWithParams_ReportsQueueFailure(t *testing.T) {
+	v := viper.New()
+	config := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.WriteFile(config, nil, 0600))
+	v.Set("config", config)
+	v.Set("entity", "testdata/main.go")
+	v.Set("key", "00000000-0000-4000-8000-000000000000")
+	v.Set("project", "example")
+
+	hh, err := testBuildHeartbeats(t.Context(), v)
+	require.NoError(t, err)
+	apiParams, err := params.LoadAPIParams(t.Context(), v, params.FlagReadOrderFlagPrecedence)
+	require.NoError(t, err)
+	heartbeatParams, err := params.LoadHeartbeatParams(t.Context(), v, params.FlagReadOrderFlagPrecedence)
+	require.NoError(t, err)
+	loaded := params.Params{
+		API: apiParams, Heartbeat: heartbeatParams,
+		Offline: params.LoadOfflineParams(t.Context(), v, params.FlagReadOrderFlagPrecedence),
+	}
+
+	for _, test := range []struct {
+		name      string
+		path      string
+		wantError bool
+	}{
+		{name: "saved despite noop sender", path: filepath.Join(t.TempDir(), "queue.db")},
+		{name: "queue is a directory", path: t.TempDir(), wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := cmdoffline.SaveHeartbeatsWithParams(t.Context(), v, test.path, hh, loaded)
+
+			if test.wantError {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			count, err := offline.CountHeartbeats(t.Context(), test.path)
+			require.NoError(t, err)
+			assert.Equal(t, 1, count)
+		})
+	}
+}
+
 func TestSaveHeartbeatsWithParams(t *testing.T) {
 	tmpFile, err := os.CreateTemp(t.TempDir(), "")
 	require.NoError(t, err)
