@@ -55,6 +55,26 @@ func TestParseHeartbeatResponsesBranches(t *testing.T) {
 	assert.Equal(t, []string{"entity: bad missing"}, result.Errors)
 }
 
+func TestParseHeartbeatResponsesMalformedShape(t *testing.T) {
+	for name, input := range map[string]string{
+		"empty tuple":    `{"responses":[[]]}`,
+		"missing status": `{"responses":[[{}]]}`,
+		"string errors":  `{"responses":[[{"errors":{"entity":"invalid"}},400]]}`,
+		"null errors":    `{"responses":[[{"errors":{"entity":null}},400]]}`,
+		"object errors":  `{"responses":[[{"errors":{"entity":{"message":"invalid"}}},400]]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var err error
+
+			assert.NotPanics(t, func() {
+				_, err = ParseHeartbeatResponses(t.Context(), []byte(input))
+			})
+
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestClientSendHeartbeatsInternalBranches(t *testing.T) {
 	t.Run("response body read error", func(t *testing.T) {
 		c := NewClient(BaseURL)

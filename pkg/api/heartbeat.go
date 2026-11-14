@@ -151,6 +151,10 @@ func ParseHeartbeatResponses(ctx context.Context, data []byte) ([]heartbeat.Resu
 
 // parseHeartbeatResponse parses one response of the aggregated responses returned by the heartbeat bulk endpoint.
 func parseHeartbeatResponse(ctx context.Context, data []json.RawMessage) (heartbeat.Result, error) {
+	if len(data) != 2 {
+		return heartbeat.Result{}, fmt.Errorf("invalid response tuple length: got %d, want 2", len(data))
+	}
+
 	var result heartbeat.Result
 
 	type responseData struct {
@@ -235,8 +239,13 @@ func parseHeartbeatResponseError(ctx context.Context, data json.RawMessage) ([]s
 			continue
 		}
 
-		m := make([]string, len(messages.([]any)))
-		for i, v := range messages.([]any) {
+		values, ok := messages.([]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid errors for field %q: expected an array", field)
+		}
+
+		m := make([]string, len(values))
+		for i, v := range values {
 			m[i] = fmt.Sprint(v)
 		}
 
