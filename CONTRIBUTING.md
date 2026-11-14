@@ -10,7 +10,7 @@ Prerequisites:
 
 - We use `make` to build and run tests
 - We use [bats](https://bats-core.readthedocs.io/en/latest/installation.html) to test shell scripts. (`brew install bats-core`)
-- We use the [Go](https://golang.org/doc/install) version listed in [go.mod](https://github.com/wakatime/wakatime-cli/blob/develop/go.mod#L3)
+- We use the [Go](https://golang.org/doc/install) version listed in [go.mod](go.mod)
 
 After cloning, install dependencies with `make install` then build with `make`.
 
@@ -18,20 +18,9 @@ Tip: run `ln -sf $(pwd)/build/* ~/.wakatime/` to have the plugins use your local
 
 ## Branches
 
-PR branch names must use one of the following prefixes:
+`develop` is the maintained default branch. Create a focused task branch and submit a pull request to `develop`.
 
-- `^major/.+` - `major`
-- `^feature/.+` - `minor`
-- `^bugfix/.+` - `patch`
-- `^docs?/.+` - `build`
-- `^misc/.+` - `build`
-
-This branching strategy comes from [semver-action](https://github.com/gandarez/semver-action#branch-names).
-
-We use two branches:
-
-- `develop` - Default branch. PRs are merged to this branch.
-- `release` - Branch for production releases and hotfixes. GitHub Actions automatically builds releases from this branch.
+The inherited release jobs belong to the upstream release process. Automatic tagging, signing, and releases run only in `wakatime/wakatime-cli`.
 
 ## Testing and Linting
 
@@ -41,23 +30,15 @@ Run `make test-all` before creating any pull requests, or your PR won’t pass t
 
 ## Pull Requests
 
-- Big changes, changes to the API, or changes with backward compatibility trade-offs should be first discussed in the Slack.
-- Search [existing pull requests](https://github.com/wakatime/wakatime-cli/pulls) to see if one has already been submitted for this change. Search the [issues](https://github.com/wakatime/wakatime-cli/issues?q=is%3Aissue) to see if there has been a discussion on this topic and whether your pull request can close any issues.
+- Search existing pull requests and issues before starting a change.
 - Code formatting should be consistent with the style used in the existing code.
 - Don't leave commented out code. A record of this code is already preserved in the commit history.
 - All commits must be atomic. This means that the commit completely accomplishes a single task. Each commit should result in fully functional code. Multiple tasks should not be combined in a single commit, but a single task should not be split over multiple commits (e.g. one commit per file modified is not a good practice). For more information see <http://www.freshconsulting.com/atomic-commits>.
 - Each pull request should address a single bug fix or feature. This may consist of multiple commits. If you have multiple, unrelated fixes or enhancements to contribute, submit them as separate pull requests.
-- Commit messages:
-  - Use the [imperative mood](http://chris.beams.io/posts/git-commit/#imperative) in the title. For example: "Apply editor.indent preference"
-  - Capitalize the title.
-  - Do not end the title with a period.
-  - Separate title from the body with a blank line. If you're committing via GitHub or GitHub Desktop this will be done automatically.
-  - Wrap body at 72 characters.
-  - Completely explain the purpose of the commit. Include a rationale for the change, any caveats, side-effects, etc.
-  - If your pull request fixes an issue in the issue tracker, use the [closes/fixes/resolves syntax](https://help.github.com/articles/closing-issues-via-commit-messages) in the body to indicate this.
-  - See <http://chris.beams.io/posts/git-commit> for more tips on writing good commit messages.
-- Pull request title and description should follow the same guidelines as commit messages.
-- Rebasing pull requests is OK and encouraged. After submitting your pull request some changes may be requested. Prefer using [git fixup](https://git-scm.com/docs/git-commit#Documentation/git-commit.txt---fixupltcommitgt) rather than adding orphan extra commits to the pull request, then do a push to your fork. As soon as your PR gets approved one of us will merge it by rebasing and squashing any residuary commits that were pushed while reviewing. This will help to keep the commit history of the repository clean.
+- Use `type(scope): description` for commit messages and pull request titles. The scope is optional. Allowed types are `feat`, `fix`, `refactor`, `docs`, `test`, `ci`, `chore`, `style`, and `perf`.
+- Use the imperative mood in the title and omit a final period.
+- Describe the problem, resulting behavior, rationale, and relevant validation in the pull request body. Link any issue the change resolves.
+- Pull requests are squash-merged using the pull request title and body as the commit message.
 
 ## Troubleshooting
 
