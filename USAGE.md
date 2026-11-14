@@ -194,9 +194,7 @@ The format is: `pattern = api_url|api_key`
 [api_urls]
 ^/home/user/work/ = https://work.example.com/api/v1|your-work-api-key
 ^/home/user/personal/ = https://personal.example.com/api/v1|your-personal-api-key
-.* =
-⁠.* = https://your-backup-server.com/api/v1|your-backup-api-key ⁠
-
+.* = https://your-backup-server.com/api/v1|your-backup-api-key
 ```
 
 With this configuration:

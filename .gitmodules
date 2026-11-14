@@ -1,3 +1,0 @@
-[submodule "bin/tests/libs/bats-assert"]
-	path = bin/tests/libs/bats-assert
-	url = https://github.com/ztombol/bats-assert.git

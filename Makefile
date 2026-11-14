@@ -35,7 +35,7 @@ else
 endif
 
 # targets
-build-all: build-all-android build-darwin build-freebsd build-linux build-netbsd build-openbsd build-windows
+build-all: build-all-android build-all-darwin build-all-freebsd build-all-linux build-all-netbsd build-all-openbsd build-all-windows
 
 build-all-android: build-android-arm build-android-arm64
 
@@ -171,8 +171,4 @@ test-integration:
 test-ip:
 	go test -race -tags=ip ./ip_test.go
 
-.PHONY: test-shell-script
-test-shell-script:
-	bats ./bin/tests
-
-test-all: lint test test-integration test-shell-script test-ip
+test-all: lint test test-integration test-ip

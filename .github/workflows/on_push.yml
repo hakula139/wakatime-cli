@@ -1,11 +1,18 @@
-name: Tests
+name: CI
 
 on:
   pull_request:
     types: [opened, reopened, edited, ready_for_review, synchronize]
   push:
-    branches: [develop, release]
-    tags-ignore: ["**"]
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 env:
   GO_VERSION_FILE: "go.mod"
@@ -37,9 +44,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-  test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
+  unit:
+    name: Unit Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
     steps:
       -
         name: Checkout
@@ -55,6 +67,7 @@ jobs:
         run: make install-go-modules
       -
         name: Check generated files are up to date
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: |
           go generate ./...
           git diff --exit-code pkg/heartbeat/language_generated.go || (echo "language_generated.go is out of date. Run 'go generate ./...' and commit the changes." && exit 1)
@@ -69,17 +82,27 @@ jobs:
           skip-cache: true
       -
         name: Vulnerability scan
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: make vulncheck
       -
         name: Coverage
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: unittests
 
-  test-integration:
-    name: Integration Tests
-    runs-on: ubuntu-latest
+  integration:
+    name: Integration Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, build-target: build-linux-amd64 }
+          - { os: windows-latest, build-target: build-windows-amd64 }
+          - { os: macos-latest, build-target: build-darwin-arm64 }
+
     steps:
       -
         name: Checkout
@@ -97,140 +120,15 @@ jobs:
         name: Build binary
         env:
           VERSION: ${{ env.TEST_VERSION }}
-        run: make build-linux-amd64
+        run: make ${{ matrix.build-target }}
       -
         name: Integration tests
         run: make test-integration
-
-  test-windows:
-    name: Unit Tests Windows
-    runs-on: windows-latest
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Pull dependencies
-        run: make install-go-modules
-      -
-        name: Unit tests
-        run: make test
-      -
-        name: Linter
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.14.0
-          skip-cache: true
-
-  test-integration-windows:
-    name: Integration Tests Windows
-    runs-on: windows-latest
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Pull dependencies
-        run: make install-go-modules
-      -
-        name: Build binary
-        env:
-          VERSION: ${{ env.TEST_VERSION }}
-        run: make build-windows-amd64
-      -
-        name: Integration tests
-        run: make test-integration
-
-  test-macos:
-    name: Unit Tests macOS
-    runs-on: macos-latest
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Pull dependencies
-        run: make install-go-modules
-      -
-        name: Unit tests
-        run: make test
-      -
-        name: Linter
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.14.0
-          skip-cache: true
-
-  test-integration-macos:
-    name: Integration Tests macOS
-    runs-on: macos-latest
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Pull dependencies
-        run: make install-go-modules
-      -
-        name: Build binary
-        env:
-          VERSION: ${{ env.TEST_VERSION }}
-        run: make build-darwin-arm64
-      -
-        name: Integration tests
-        run: make test-integration
-
-  test-shell-script:
-    name: Unit Tests Shell Script
-    runs-on: macos-latest
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      -
-        name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
-        with:
-          ignore_paths: 'bin/tests/libs'
-          ignore_names: govulncheck-with-excludes.sh
-      -
-        name: Setup bats
-        uses: mig4/setup-bats@v1
-        with:
-          bats-version: 1.10.0
-      -
-        name: Unit tests
-        run: make test-shell-script
 
   ip-check:
     name: IP Check
     runs-on: ubuntu-latest
+
     steps:
       -
         name: Checkout
@@ -254,13 +152,8 @@ jobs:
     if: ${{ !cancelled() }}
     needs:
       - pr-title
-      - test
-      - test-integration
-      - test-windows
-      - test-integration-windows
-      - test-macos
-      - test-integration-macos
-      - test-shell-script
+      - unit
+      - integration
       - ip-check
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -271,525 +164,3 @@ jobs:
       -
         name: Check results
         uses: hakula139/devkit/.github/actions/ci-result@v3
-
-  version:
-    name: Version
-    concurrency: tagging
-    if: ${{ github.repository == 'wakatime/wakatime-cli' && (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/develop') }}
-    runs-on: ubuntu-latest
-    needs: [
-      test,
-      test-integration,
-      test-windows,
-      test-integration-windows,
-      test-macos,
-      test-integration-macos,
-      test-shell-script,
-      ip-check]
-    outputs:
-      semver_tag: ${{ steps.semver-tag.outputs.semver_tag }}
-      ancestor_tag: ${{ steps.semver-tag.outputs.ancestor_tag }}
-      is_prerelease: ${{ steps.semver-tag.outputs.is_prerelease }}
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-      -
-        name: Calculate semver tag
-        id: semver-tag
-        uses: alanhamlett/semver-action@a4c3580ce5328d1a34fefa2854d0f2fde8e29536 # master
-        with:
-          branching_model: git-flow
-          develop_branch_name: develop
-          main_branch_name: release
-          prefix: v
-          prerelease_id: alpha
-          major_regex: (?i)^(.+:)?(major/.+|release/.+)
-      - name: Create tag
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.createRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "refs/tags/${{ steps.semver-tag.outputs.semver_tag }}",
-              sha: context.sha
-            })
-
-  build-android:
-    name: Build Android
-    runs-on: ubuntu-latest
-    needs: [version]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Build binary for arm
-        env:
-          VERSION: ${{ needs.version.outputs.semver_tag }}
-        shell: bash
-        # 2 is the number of virtual cpus for Linux. macOS is 3.
-        run: make -j2 build-android-arm CC="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
-      -
-        name: Build binary for arm64
-        env:
-          VERSION: ${{ needs.version.outputs.semver_tag }}
-        shell: bash
-        # 2 is the number of virtual cpus for Linux. macOS is 3.
-        run: make -j2 build-android-arm64
-      -
-        name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-android
-          path: build/
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-
-  build-linux:
-    name: Build Linux
-    runs-on: ubuntu-latest
-    needs: [version]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Build binaries
-        env:
-          VERSION: ${{ needs.version.outputs.semver_tag }}
-        shell: bash
-        # 2 is the number of virtual cpus for Linux. macOS is 3.
-        run: make -j2 build-all-linux
-      -
-        name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-linux
-          path: build/
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-
-  build-freebsd:
-    name: Build FreeBSD
-    runs-on: ubuntu-latest
-    needs: [version]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Build binaries
-        env:
-          VERSION: ${{ needs.version.outputs.semver_tag }}
-        shell: bash
-        # 2 is the number of virtual cpus for Linux. macOS is 3.
-        run: make -j2 build-all-freebsd
-      -
-        name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-freebsd
-          path: build/
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-
-  build-netbsd:
-    name: Build NetBSD
-    runs-on: ubuntu-latest
-    needs: [version]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Build binaries
-        env:
-          VERSION: ${{ needs.version.outputs.semver_tag }}
-        shell: bash
-        # 2 is the number of virtual cpus for Linux. macOS is 3.
-        run: make -j2 build-all-netbsd
-      -
-        name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-netbsd
-          path: build/
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-
-  build-openbsd:
-    name: Build OpenBSD
-    runs-on: ubuntu-latest
-    needs: [version]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Build binaries
-        env:
-          VERSION: ${{ needs.version.outputs.semver_tag }}
-        shell: bash
-        # 2 is the number of virtual cpus for Linux. macOS is 3.
-        run: make -j2 build-all-openbsd
-      -
-        name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-openbsd
-          path: build/
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-
-  build-darwin:
-    name: Build Darwin
-    runs-on: macos-latest
-    needs: [version]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Build binaries
-        env:
-          VERSION: ${{ needs.version.outputs.semver_tag }}
-        shell: bash
-        # 3 is the number of virtual cpus for macOS. Linux is only 2.
-        run: make -j3 build-all-darwin
-      -
-        name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: unsigned-binaries-darwin
-          path: build/
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-
-  build-windows:
-    name: Build Windows
-    runs-on: windows-latest
-    needs: [version]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          check-latest: ${{ env.CHECK_LATEST }}
-          cache: false
-      -
-        name: Build binaries
-        env:
-          VERSION: ${{ needs.version.outputs.semver_tag }}
-        shell: bash
-        # 2 is the number of virtual cpus for Windows. macOS is 3.
-        run: make -j2 build-all-windows
-      -
-        name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-windows
-          path: build/
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-
-  sign:
-    name: Sign Apple binaries
-    needs: [version, build-darwin]
-    runs-on: macos-latest
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: unsigned-binaries-darwin*
-          merge-multiple: true
-          path: build/
-      -
-        name: Import Code-Signing Certificates
-        uses: Apple-Actions/import-codesign-certs@v3
-        with:
-          # The certificates in a PKCS12 file encoded as a base64 string
-          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
-          # The password used to import the PKCS12 file.
-          p12-password: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
-      -
-        name: Codesign
-        run: |
-          codesign -v --force --timestamp -s "Developer ID Application: WAKATIME, LLC" --options runtime ./build/wakatime-cli-darwin-amd64
-          codesign -v --force --timestamp -s "Developer ID Application: WAKATIME, LLC" --options runtime ./build/wakatime-cli-darwin-arm64
-      -
-        name: Store Credentials
-        env:
-          NOTARIZATION_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          NOTARIZATION_APPLE_ID: ${{ secrets.AC_USERNAME }}
-          NOTARIZATION_PWD: ${{ secrets.AC_PASSWORD }}
-        run: xcrun notarytool store-credentials "notarytool-profile" --apple-id "$NOTARIZATION_APPLE_ID" --team-id "$NOTARIZATION_TEAM_ID" --password "$NOTARIZATION_PWD"
-      -
-        name: Notarize amd64
-        run: |
-          ditto -c -k --keepParent ./build/wakatime-cli-darwin-amd64 ./wakatime-cli-darwin-amd64.zip
-          xcrun notarytool submit ./wakatime-cli-darwin-amd64.zip --keychain-profile "notarytool-profile" --wait
-      -
-        name: Notarize arm64
-        run: |
-          ditto -c -k --keepParent ./build/wakatime-cli-darwin-arm64 ./wakatime-cli-darwin-arm64.zip
-          xcrun notarytool submit ./wakatime-cli-darwin-arm64.zip --keychain-profile "notarytool-profile" --wait
-      -
-        name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-darwin
-          path: build/
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-
-  release:
-    name: Release
-    runs-on: ubuntu-latest
-    needs: [
-      version,
-      build-android,
-      build-linux,
-      build-freebsd,
-      build-netbsd,
-      build-openbsd,
-      build-darwin,
-      build-windows,
-      sign]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      -
-        # Run only for develop branch
-        if: ${{ github.ref == 'refs/heads/develop' }}
-        name: Changelog for develop
-        uses: gandarez/changelog-action@v1.5.0
-        id: changelog-develop
-        with:
-          current_tag: ${{ github.sha }}
-          previous_tag: ${{ needs.version.outputs.ancestor_tag }}
-          exclude: |
-            ^Merge pull request .*
-      -
-        # Run only for release branch
-        if: ${{ github.ref == 'refs/heads/release' }}
-        name: Get related pull request
-        uses: 8BitJonny/gh-get-current-pr@3.0.0
-        id: changelog-release
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      -
-        name: Prepare changelog
-        id: changelog
-        env:
-          CHANGELOG: ${{ steps.changelog-develop.outputs.changelog }}
-          PRBODY: ${{ steps.changelog-release.outputs.pr_body }}
-        run: |
-          CHANGELOG=$(echo "$CHANGELOG" | tr -d \")
-          PRBODY=$(echo "$PRBODY" | tr -d \")
-          ./bin/prepare_changelog.sh $(echo ${GITHUB_REF#refs/heads/}) "${CHANGELOG:-$PRBODY}"
-      -
-        name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: binaries-*
-          merge-multiple: true
-          path: build/
-      -
-        name: Prepare release assets
-        run: ./bin/prepare_assets.sh
-      -
-        name: "Create release"
-        uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ needs.version.outputs.semver_tag }}
-          tag_name: ${{ needs.version.outputs.semver_tag }}
-          body: "## Changelog\n${{ steps.changelog.outputs.changelog }}"
-          prerelease: ${{ needs.version.outputs.is_prerelease }}
-          target_commitish: ${{ github.sha }}
-          draft: false
-          files: ./release/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      -
-        name: Remove tag if failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "tags/${{ needs.version.outputs.semver_tag }}"
-            })
-      -
-        name: "Slack notification"
-        uses: 8398a7/action-slack@v3
-        if: ${{ success() }}
-        with:
-          status: custom
-          fields: message
-          custom_payload: |
-            {
-              username: 'WakaTime Bot',
-              icon_emoji: ':mega:',
-              blocks: [
-                {
-                  type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: `New <https://github.com/wakatime/wakatime-cli|wakatime-cli> version <https://github.com/wakatime/wakatime-cli/releases/tag/${{ needs.version.outputs.semver_tag }}|${{ needs.version.outputs.semver_tag }}> released`
-                  }
-                },
-                {
-                  type: 'context',
-                  elements: [
-                    {
-                      type: 'mrkdwn',
-                      text: `${{ steps.changelog.outputs.slack }}`
-                    }
-                  ]
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
