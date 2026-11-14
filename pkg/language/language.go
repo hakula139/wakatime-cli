@@ -116,23 +116,16 @@ func detectSpecialCases(ctx context.Context, fp string) (heartbeat.Language, boo
 	}
 
 	if ext == ".c" || ext == ".h" || isCPPExtension(ext) {
-		if correspondingFileExists(fp, ".c") {
+		switch {
+		case correspondingFileExists(fp, ".c"):
 			return heartbeat.LanguageC, true
-		}
-
-		if correspondingFileExists(fp, ".m") {
+		case correspondingFileExists(fp, ".m"):
 			return heartbeat.LanguageObjectiveC, true
-		}
-
-		if correspondingFileExists(fp, ".mm") {
+		case correspondingFileExists(fp, ".mm"):
 			return heartbeat.LanguageObjectiveCPP, true
-		}
-
-		if folderContainsCPPFiles(ctx, dir) {
+		case folderContainsCPPFiles(ctx, dir):
 			return heartbeat.LanguageCPP, true
-		}
-
-		if folderContainsCFiles(ctx, dir) {
+		case folderContainsCFiles(ctx, dir):
 			return heartbeat.LanguageC, true
 		}
 	}
