@@ -39,6 +39,13 @@ buildGoModule (finalAttrs: {
   nativeCheckInputs = [ writableTmpDirAsHomeHook ];
   __darwinAllowLocalNetworking = true;
 
+  checkPhase = ''
+    runHook preCheck
+    export GOFLAGS=''${GOFLAGS//-trimpath/}
+    go test -p "$NIX_BUILD_CORES" ./...
+    runHook postCheck
+  '';
+
   passthru.tests.version = testers.testVersion {
     package = finalAttrs.finalPackage;
     command = ''HOME="$TMPDIR" wakatime-cli --version'';
