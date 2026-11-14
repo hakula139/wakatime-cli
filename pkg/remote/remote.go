@@ -67,6 +67,8 @@ func WithDetection() heartbeat.HandleOption {
 					continue
 				}
 
+				_ = tmpFile.Close()
+
 				c, err := NewClient(ctx, h.Entity)
 				if err != nil {
 					logger.Errorf("failed to create new remote client: %s", err)
@@ -86,7 +88,9 @@ func WithDetection() heartbeat.HandleOption {
 							logger.Errorf("failed to download remote file using fallback option: %s", err)
 						}
 					}
+				}
 
+				if err != nil {
 					deleteLocalFile(ctx, tmpFile.Name())
 
 					continue
