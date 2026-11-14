@@ -258,6 +258,7 @@ func RunCmdWithOfflineSync(ctx context.Context, v *viper.Viper, verbose bool, se
 func runCmd(ctx context.Context, v *viper.Viper, verbose bool, sendDiagsOnErrors bool, cmd cmdFn) (errresponse error) {
 	logs := bytes.NewBuffer(nil)
 	resetLogs := captureLogs(ctx, logs)
+	defer resetLogs()
 
 	logger := log.Extract(ctx)
 
