@@ -96,10 +96,18 @@ func WithNTLMRequestRetry(ctx context.Context, creds string) (Option, error) {
 			if err != nil {
 				logger.Errorf("request to api failed with error %q. Will retry with ntlm auth", err)
 
-				clCopy := cl
-				withNTLM(clCopy)
+				reqRetry, cloneErr := cloneRequest(req)
+				if cloneErr != nil {
+					return nil, err
+				}
 
-				return clCopy.Do(ctx, req)
+				clientRetry := *cl
+				httpClientRetry := *cl.client
+				clientRetry.client = &httpClientRetry
+				clientRetry.doFunc = next
+				withNTLM(&clientRetry)
+
+				return clientRetry.doFunc(&clientRetry, reqRetry)
 			}
 
 			return resp, nil
