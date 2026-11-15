@@ -98,7 +98,7 @@ func SendHeartbeats(
 		return err
 	}
 
-	return sendPreparedHeartbeats(ctx, v, params, queueFilepath, heartbeats, true, loadParams)
+	return sendPreparedHeartbeats(ctx, v, params, queueFilepath, heartbeats, loadParams)
 }
 
 func loadParams(
@@ -141,7 +141,7 @@ func buildHandle(ctx context.Context, v *viper.Viper, params params.Params, queu
 	}
 
 	if !params.Offline.Disabled {
-		handleOpts = append(handleOpts, offline.WithQueue(queueFilepath))
+		handleOpts = append(handleOpts, offline.WithAIBuffering(queueFilepath), offline.WithQueue(queueFilepath))
 	}
 
 	handleOpts = append(handleOpts, backoff.WithBackoff(backoff.Config{
@@ -264,7 +264,6 @@ func sendPreparedHeartbeats(
 	params params.Params,
 	queueFilepath string,
 	heartbeats []heartbeat.Heartbeat,
-	withProjectConfig bool,
 	paramsLoader func(context.Context, *viper.Viper, params.FlagReadOrder) (params.Params, error),
 ) error {
 	logger := log.Extract(ctx)
@@ -329,20 +328,11 @@ func sendPreparedHeartbeats(
 		return fmt.Errorf("failed to initialize api client: %w", err)
 	}
 
-	opts := initHandleOptions()
-
-	handle := sender
-	if withProjectConfig {
-		handle = handler.New(v, handler.Config{
-			Params:       params,
-			ParamsLoader: paramsLoader,
-			Opts:         opts,
-		})(sender)
-	} else {
-		for i := len(opts) - 1; i >= 0; i-- {
-			handle = opts[i](params)(handle)
-		}
-	}
+	handle := handler.New(v, handler.Config{
+		Params:       params,
+		ParamsLoader: paramsLoader,
+		Opts:         initHandleOptions(),
+	})(sender)
 
 	results, err := handle(ctx, heartbeats)
 
@@ -382,14 +372,4 @@ func setLogFields(ctx context.Context, params params.Params) {
 	if params.Heartbeat.IsWrite != nil {
 		log.AddField(ctx, "is_write", params.Heartbeat.IsWrite)
 	}
-}
-
-func shouldUseProjectConfig(heartbeats []heartbeat.Heartbeat) bool {
-	for _, h := range heartbeats {
-		if h.EntityType == heartbeat.FileType && !h.IsUnsavedEntity {
-			return true
-		}
-	}
-
-	return false
 }

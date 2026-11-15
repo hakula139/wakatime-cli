@@ -106,6 +106,74 @@ func TestQueueDeleteDuplicatesRemovesNearbyHeartbeat(t *testing.T) {
 	}))
 }
 
+func TestQueuePreservesAIEventsDuringDeduplication(t *testing.T) {
+	db := openTestQueueDB(t)
+	defer db.Close()
+
+	base := heartbeat.Heartbeat{
+		AISession:      "session-a",
+		AIInputTokens:  3,
+		AIOutputTokens: 5,
+		Category:       heartbeat.AICodingCategory.String(),
+		Entity:         "/home/u/src/app/main.go",
+		EntityType:     heartbeat.FileType,
+		IsWrite:        heartbeat.PointerTo(true),
+		Time:           10,
+		UserAgent:      "model-a/1 plugin/1",
+	}
+	changes := []func(*heartbeat.Heartbeat){
+		func(h *heartbeat.Heartbeat) { h.AISession = "session-b" },
+		func(h *heartbeat.Heartbeat) { h.AISession = ""; h.Time = 9.5 },
+		func(h *heartbeat.Heartbeat) { h.UserAgent = "model-b/1 plugin/1" },
+		func(h *heartbeat.Heartbeat) { h.AIInputTokens = 7 },
+		func(h *heartbeat.Heartbeat) { h.AICachedInputTokens = 11 },
+		func(h *heartbeat.Heartbeat) { h.AIOutputTokens = 13 },
+		func(h *heartbeat.Heartbeat) { h.AIPromptLength = 17 },
+		func(h *heartbeat.Heartbeat) { h.AILineChanges = heartbeat.PointerTo(19) },
+		func(h *heartbeat.Heartbeat) { h.HumanLineChanges = heartbeat.PointerTo(23) },
+		func(h *heartbeat.Heartbeat) { h.Time = 10.5 },
+	}
+	expected := []heartbeat.Heartbeat{base}
+	for _, change := range changes {
+		h := base
+		change(&h)
+		expected = append(expected, h)
+	}
+	human := heartbeat.Heartbeat{
+		Category:   heartbeat.CodingCategory.String(),
+		Entity:     base.Entity,
+		EntityType: heartbeat.FileType,
+		Time:       10,
+		UserAgent:  "editor/1",
+	}
+	laterHuman := human
+	laterHuman.Time = 11.2
+	expected = append(expected, human, laterHuman)
+	duplicateHuman := human
+	duplicateHuman.Time = 10.25
+	input := append(append([]heartbeat.Heartbeat(nil), expected...), duplicateHuman)
+
+	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
+		queue := NewQueue(tx)
+		require.NoError(t, queue.PushMany(input))
+		require.NoError(t, queue.PushMany(input))
+
+		got, err := queue.ReadMany(100)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, input, got)
+
+		deleted, err := queue.DeleteDuplicates()
+		require.NoError(t, err)
+		assert.Equal(t, 1, deleted)
+		got, err = queue.ReadMany(100)
+		require.NoError(t, err)
+
+		assert.ElementsMatch(t, expected, got)
+
+		return nil
+	}))
+}
+
 func TestResetCorruptDBHelpers(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.bdb")
 	backup, err := resetCorruptDB(missing)

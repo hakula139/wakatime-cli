@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ func WithQueue(filepath string) heartbeat.HandleOption {
 			if err != nil {
 				logger.Debugf("pushing %d heartbeat(s) to queue after error: %s", len(hh), err)
 
-				requeueErr := pushHeartbeatsWithRetry(ctx, filepath, hh)
+				requeueErr := pushHeartbeatsWithRetry(ctx, filepath, dbBucket, hh)
 				if requeueErr != nil {
 					return nil, fmt.Errorf(
 						"failed to push heartbeats to queue: %w",
@@ -168,7 +169,7 @@ func Sync(ctx context.Context, filepath string, syncLimit int) func(next heartbe
 
 			results, err := next(ctx, hh)
 			if err != nil {
-				requeueErr := pushHeartbeatsWithRetry(ctx, filepath, hh)
+				requeueErr := pushHeartbeatsWithRetry(ctx, filepath, dbBucket, hh)
 				if requeueErr != nil {
 					logger.Warnf("failed to push heartbeats to queue after api error: %s", requeueErr)
 				}
@@ -250,7 +251,7 @@ func handleResults(
 
 		stopSending = true
 
-		err = pushHeartbeatsWithRetry(ctx, filepath, withInvalidStatus)
+		err = pushHeartbeatsWithRetry(ctx, filepath, dbBucket, withInvalidStatus)
 		if err != nil {
 			logger.Warnf("failed to push heartbeats with invalid status to queue: %s", err)
 		}
@@ -261,7 +262,7 @@ func handleResults(
 	if len(leftovers) > 0 {
 		logger.Warnf("missing %d results from api.", len(leftovers))
 
-		err = pushHeartbeatsWithRetry(ctx, filepath, leftovers)
+		err = pushHeartbeatsWithRetry(ctx, filepath, dbBucket, leftovers)
 		if err != nil {
 			logger.Warnf("failed to push leftover heartbeats to queue: %s", err)
 		}
@@ -329,6 +330,10 @@ func popHeartbeats(ctx context.Context, filepath string, limit int) (queued []he
 
 	queue := NewQueue(tx)
 
+	if err := queue.PromoteAI(time.Now()); err != nil {
+		return nil, fmt.Errorf("failed to promote pending ai heartbeats: %w", err)
+	}
+
 	_, err = queue.DeleteDuplicates()
 	if err != nil {
 		logger.Errorf("failed to delete duplicate offline heartbeats: %s", err)
@@ -350,7 +355,7 @@ func popHeartbeats(ctx context.Context, filepath string, limit int) (queued []he
 	return queued, nil
 }
 
-func pushHeartbeatsWithRetry(ctx context.Context, filepath string, hh []heartbeat.Heartbeat) error {
+func pushHeartbeatsWithRetry(ctx context.Context, filepath, bucket string, hh []heartbeat.Heartbeat) error {
 	var (
 		count int
 		err   error
@@ -373,7 +378,7 @@ func pushHeartbeatsWithRetry(ctx context.Context, filepath string, hh []heartbea
 			)
 		}
 
-		err = pushHeartbeats(ctx, filepath, hh)
+		err = pushHeartbeats(ctx, filepath, bucket, hh)
 		if err != nil {
 			count++
 
@@ -397,7 +402,7 @@ func pushHeartbeatsWithRetry(ctx context.Context, filepath string, hh []heartbea
 	return nil
 }
 
-func pushHeartbeats(ctx context.Context, filepath string, hh []heartbeat.Heartbeat) (err error) {
+func pushHeartbeats(ctx context.Context, filepath, bucket string, hh []heartbeat.Heartbeat) (err error) {
 	defer func() {
 		recoverDBPanic(filepath, &err, recover())
 	}()
@@ -427,6 +432,7 @@ func pushHeartbeats(ctx context.Context, filepath string, hh []heartbeat.Heartbe
 	}()
 
 	queue := NewQueue(tx)
+	queue.Bucket = bucket
 
 	err = queue.PushMany(hh)
 	if err != nil {
@@ -476,7 +482,14 @@ func CountHeartbeats(ctx context.Context, filepath string) (count int, err error
 		return 0, fmt.Errorf("failed to count heartbeats: %w", err)
 	}
 
-	return count, nil
+	queue.Bucket = aiPendingBucket
+
+	pendingCount, err := queue.Count()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count pending ai heartbeats: %w", err)
+	}
+
+	return count + pendingCount, nil
 }
 
 // ReadHeartbeats reads the informed heartbeats in the offline db.
@@ -515,6 +528,22 @@ func ReadHeartbeats(ctx context.Context, filepath string, limit int) (hh []heart
 		logger.Errorf("failed to read offline heartbeats: %s", err)
 
 		return nil, err
+	}
+
+	queue.Bucket = aiPendingBucket
+
+	pending, err := queue.ReadMany(limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pending ai heartbeats: %w", err)
+	}
+
+	hh = append(hh, pending...)
+	sort.SliceStable(hh, func(i, j int) bool {
+		return hh[i].Time < hh[j].Time
+	})
+
+	if limit >= 0 && len(hh) > limit {
+		hh = hh[:limit]
 	}
 
 	return hh, nil
@@ -740,6 +769,10 @@ func (q *Queue) DeleteDuplicates() (int, error) {
 		err := json.Unmarshal(value, &h)
 		if err != nil {
 			return 0, fmt.Errorf("failed to json unmarshal heartbeat data: %w", err)
+		}
+
+		if h.Category == heartbeat.AICodingCategory.String() {
+			continue
 		}
 
 		isDuplicate := false

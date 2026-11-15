@@ -44,15 +44,12 @@ func RunAISyncActivity(ctx context.Context, v *viper.Viper) (int, error) {
 		return exitcode.Success, nil
 	}
 
-	useProjectConfig := shouldUseProjectConfig(heartbeats)
-
 	if err := sendPreparedHeartbeats(
 		ctx,
 		v,
 		loadedParams,
 		queueFilepath,
 		heartbeats,
-		useProjectConfig,
 		loadAISyncParams,
 	); err != nil {
 		if errwaka, ok := err.(wakaerror.Error); ok {

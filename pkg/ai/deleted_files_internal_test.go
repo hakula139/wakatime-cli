@@ -100,15 +100,22 @@ func TestGenericDeletedFileTools(t *testing.T) {
 }
 
 func TestReplaceAppHeartbeats_DeletionThenRecreation(t *testing.T) {
-	hh := replaceAppHeartbeats(Heartbeats{
+	input := Heartbeats{
 		{AISession: "session", Entity: "file.go", EntityType: heartbeat.FileType, IsUnsavedEntity: true, Time: 100},
 		{AISession: "session", Entity: "app", EntityType: heartbeat.AppType, AIPromptLength: 10, Time: 110},
 		{AISession: "session", Entity: "file.go", EntityType: heartbeat.FileType, Time: 120},
 		{AISession: "session", Entity: "app", EntityType: heartbeat.AppType, AIPromptLength: 20, Time: 130},
-	})
-	require.Len(t, hh, 2)
-	assert.True(t, hh[0].IsUnsavedEntity)
-	assert.Equal(t, 10, hh[0].AIPromptLength)
-	assert.False(t, hh[1].IsUnsavedEntity)
-	assert.Equal(t, 20, hh[1].AIPromptLength)
+	}
+
+	expected := append([]heartbeat.Heartbeat(nil), input...)
+	for i := range expected {
+		expected[i].Entity = "file.go"
+		expected[i].EntityType = heartbeat.FileType
+	}
+
+	expected[1].IsUnsavedEntity = true
+
+	hh := replaceAppHeartbeats(input)
+
+	assert.Equal(t, expected, hh)
 }

@@ -132,6 +132,84 @@ func TestHeartbeat_ID_NilFields(t *testing.T) {
 	assert.Equal(t, "1592868313.541149-nil-file-undefined-unset-unset-/tmp/main.go-false", h.ID())
 }
 
+func TestHeartbeat_ID_AICodingDistinguishesWireData(t *testing.T) {
+	tests := map[string]func(*heartbeat.Heartbeat){
+		"session":             func(h *heartbeat.Heartbeat) { h.AISession = "session-b" },
+		"model":               func(h *heartbeat.Heartbeat) { h.UserAgent = "model-b/1 plugin-a/1" },
+		"full user agent":     func(h *heartbeat.Heartbeat) { h.UserAgent = "model-a/1 plugin-b/1" },
+		"subscription":        func(h *heartbeat.Heartbeat) { h.AISubscriptionPlan = "team" },
+		"input tokens":        func(h *heartbeat.Heartbeat) { h.AIInputTokens++ },
+		"cached input tokens": func(h *heartbeat.Heartbeat) { h.AICachedInputTokens++ },
+		"output tokens":       func(h *heartbeat.Heartbeat) { h.AIOutputTokens++ },
+		"prompt length":       func(h *heartbeat.Heartbeat) { h.AIPromptLength++ },
+		"ai line changes":     func(h *heartbeat.Heartbeat) { h.AILineChanges = heartbeat.PointerTo(3) },
+		"human line changes":  func(h *heartbeat.Heartbeat) { h.HumanLineChanges = heartbeat.PointerTo(5) },
+		"ai line presence":    func(h *heartbeat.Heartbeat) { h.AILineChanges = nil },
+		"human line presence": func(h *heartbeat.Heartbeat) { h.HumanLineChanges = nil },
+		"project":             func(h *heartbeat.Heartbeat) { h.Project = heartbeat.PointerTo("other-app") },
+		"submicrosecond time": func(h *heartbeat.Heartbeat) { h.Time += 0.0000001 },
+	}
+
+	for _, session := range []string{"session-a", ""} {
+		for name, change := range tests {
+			t.Run(fmt.Sprintf("session=%q/%s", session, name), func(t *testing.T) {
+				original := heartbeat.Heartbeat{
+					AILineChanges:       heartbeat.PointerTo(0),
+					AICachedInputTokens: 11,
+					AISession:           session,
+					AISubscriptionPlan:  "individual",
+					AIInputTokens:       13,
+					AIOutputTokens:      17,
+					AIPromptLength:      19,
+					Branch:              heartbeat.PointerTo("main"),
+					Category:            heartbeat.AICodingCategory.String(),
+					Entity:              "/home/u/src/app/main.go",
+					EntityType:          heartbeat.FileType,
+					HumanLineChanges:    heartbeat.PointerTo(0),
+					Language:            heartbeat.PointerTo("Go"),
+					Project:             heartbeat.PointerTo("app"),
+					Time:                100.25,
+					UserAgent:           "model-a/1 plugin-a/1",
+				}
+				changed := original
+				change(&changed)
+
+				assert.NotEqual(t, original.ID(), changed.ID())
+			})
+		}
+	}
+}
+
+func TestHeartbeat_ID_AICodingUsesLogicalWireData(t *testing.T) {
+	original := heartbeat.Heartbeat{
+		AILineChanges:       heartbeat.PointerTo(0),
+		AISession:           "session-a",
+		AIInputTokens:       13,
+		Category:            heartbeat.AICodingCategory.String(),
+		Entity:              "/home/u/src/app/main.go",
+		EntityType:          heartbeat.FileType,
+		HumanLineChanges:    heartbeat.PointerTo(0),
+		Project:             heartbeat.PointerTo("app"),
+		ProjectPathOverride: "/home/u/src/app",
+		Time:                100.25,
+		UserAgent:           "model-a/1 plugin-a/1",
+	}
+	routed := original
+	routed.APIKey = "example-key"
+	routed.APIURL = "https://example.com/api/v1"
+
+	encoded, err := json.Marshal(routed)
+	require.NoError(t, err)
+
+	var decoded heartbeat.Heartbeat
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+
+	assert.Equal(t, original.ID(), routed.ID())
+	assert.Equal(t, original.ID(), decoded.ID())
+	assert.Equal(t, original.AILineChanges, decoded.AILineChanges)
+	assert.Equal(t, original.HumanLineChanges, decoded.HumanLineChanges)
+}
+
 func TestHeartbeat_JSON(t *testing.T) {
 	h := heartbeat.Heartbeat{
 		AILineChanges:      heartbeat.PointerTo(5),

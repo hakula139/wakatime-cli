@@ -37,7 +37,6 @@ func New(
 			logger := *log.Extract(ctx) // make it a shallow copy to avoid modifying the original logger
 
 			for _, h := range hh {
-				// shallow copy the params to avoid modifying the original
 				effectiveParams := cfg.Params
 
 				p, ok, err := findProjectConfigFile(ctx, v, h.Entity, h.EntityType, h.IsUnsavedEntity, cfg.ParamsLoader)
@@ -46,7 +45,6 @@ func New(
 				}
 
 				if ok {
-					// if project-level configuration file is found, use it
 					logger.Debugf("found project-level configuration file %s for entity %q", projectConfigFileName, h.Entity)
 					logger.Debugf("project-level params: %s", p)
 
@@ -65,7 +63,11 @@ func New(
 				}
 
 				for _, r := range res {
-					heartbeats = append(heartbeats, r.Heartbeat)
+					h := r.Heartbeat
+					h.SkipAIBuffering = ok ||
+						len(effectiveParams.API.KeyPatterns) > 0 ||
+						len(effectiveParams.API.URLPatterns) > 0
+					heartbeats = append(heartbeats, h)
 				}
 			}
 
@@ -103,12 +105,10 @@ func findProjectConfigFile(
 
 	v = projectV
 
-	// load project-level configuration file into viper instance
 	if err := ini.ReadInConfig(v, fp); err != nil {
 		return params.Params{}, false, fmt.Errorf("failed to load project-level configuration file: %s", err)
 	}
 
-	// load parameters from viper instance
 	p, err := paramsLoader(ctx, v, params.FlagReadOrderProjectConfigPrecedence)
 	if err != nil {
 		return params.Params{}, false, fmt.Errorf("failed to load project-level parameters: %w", err)

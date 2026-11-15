@@ -2,6 +2,8 @@ package heartbeat
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -52,6 +54,7 @@ type Heartbeat struct {
 	ProjectPath           string     `json:"-"`
 	ProjectPathOverride   string     `json:"-"`
 	ProjectRootCount      *int       `json:"project_root_count,omitempty"`
+	SkipAIBuffering       bool       `json:"-"`
 	Time                  float64    `json:"time"`
 	UserAgent             string     `json:"user_agent"`
 }
@@ -186,6 +189,12 @@ func NewWithAITokens(
 
 // ID returns an ID generated from the heartbeat data.
 func (h Heartbeat) ID() string {
+	if h.Category == aiCodingCategoryString {
+		wireBytes, _ := json.Marshal(h)
+
+		return fmt.Sprintf("%f-ai-%x", h.Time, sha256.Sum256(wireBytes))
+	}
+
 	branch := "unset"
 	if h.Branch != nil {
 		branch = *h.Branch
