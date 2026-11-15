@@ -76,7 +76,7 @@ func TestSaveHeartbeatsPreservesProjectConfiguredAIActivity(t *testing.T) {
 					assert.Equal(t, h.AIInputTokens, stored[0].AIInputTokens)
 					assert.Equal(t, h.AIPromptLength, stored[0].AIPromptLength)
 					assert.Equal(t, h.Time, stored[0].Time)
-					assert.Equal(t, h.Entity, stored[0].Entity)
+					assert.Equal(t, filepath.ToSlash(h.Entity), stored[0].Entity)
 					require.NotNil(t, stored[0].Project)
 					assert.Equal(t, "app", *stored[0].Project)
 				}
