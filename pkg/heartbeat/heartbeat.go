@@ -188,7 +188,7 @@ func NewWithAITokens(
 
 // ID returns an ID generated from the heartbeat data.
 func (h Heartbeat) ID() string {
-	if h.Category == "ai coding" {
+	if h.Category == aiCodingCategoryString {
 		wireBytes, _ := json.Marshal(h)
 
 		return fmt.Sprintf("%f-ai-%x", h.Time, sha256.Sum256(wireBytes))

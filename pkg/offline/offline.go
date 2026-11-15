@@ -742,7 +742,7 @@ func (q *Queue) DeleteDuplicates() (int, error) {
 			return 0, fmt.Errorf("failed to json unmarshal heartbeat data: %w", err)
 		}
 
-		if h.Category == "ai coding" {
+		if h.Category == heartbeat.AICodingCategory.String() {
 			continue
 		}
 
