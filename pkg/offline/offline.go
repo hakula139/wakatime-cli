@@ -742,6 +742,10 @@ func (q *Queue) DeleteDuplicates() (int, error) {
 			return 0, fmt.Errorf("failed to json unmarshal heartbeat data: %w", err)
 		}
 
+		if h.Category == "ai coding" {
+			continue
+		}
+
 		isDuplicate := false
 
 		for _, keptTime := range kept[h.Entity] {

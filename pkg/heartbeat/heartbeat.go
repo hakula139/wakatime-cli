@@ -2,6 +2,8 @@ package heartbeat
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -186,6 +188,12 @@ func NewWithAITokens(
 
 // ID returns an ID generated from the heartbeat data.
 func (h Heartbeat) ID() string {
+	if h.Category == "ai coding" {
+		wireBytes, _ := json.Marshal(h)
+
+		return fmt.Sprintf("%f-ai-%x", h.Time, sha256.Sum256(wireBytes))
+	}
+
 	branch := "unset"
 	if h.Branch != nil {
 		branch = *h.Branch
