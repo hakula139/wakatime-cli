@@ -89,7 +89,6 @@ func TestSendPreparedHeartbeatsRateLimitedSavesOffline(t *testing.T) {
 		params,
 		queueFile,
 		[]heartbeatpkg.Heartbeat{internalAppHeartbeat()},
-		false,
 		loadParams,
 	)
 
@@ -111,7 +110,6 @@ func TestSendPreparedHeartbeatsBuildHandleErrorSavesOffline(t *testing.T) {
 		params,
 		queueFile,
 		[]heartbeatpkg.Heartbeat{internalAppHeartbeat()},
-		false,
 		loadParams,
 	)
 
@@ -140,7 +138,6 @@ func TestSendPreparedHeartbeatsSavesExtraBeforeBuildHandleError(t *testing.T) {
 		params,
 		queueFile,
 		heartbeats,
-		false,
 		loadParams,
 	)
 
@@ -150,19 +147,6 @@ func TestSendPreparedHeartbeatsSavesExtraBeforeBuildHandleError(t *testing.T) {
 	count, countErr := offlinepkg.CountHeartbeats(t.Context(), queueFile)
 	require.NoError(t, countErr)
 	assert.Equal(t, offlinepkg.SendLimit+1, count)
-}
-
-func TestShouldUseProjectConfigBranches(t *testing.T) {
-	assert.False(t, shouldUseProjectConfig([]heartbeatpkg.Heartbeat{{Entity: "Terminal", EntityType: heartbeatpkg.AppType}}))
-	assert.False(t, shouldUseProjectConfig([]heartbeatpkg.Heartbeat{{
-		Entity:          "/tmp/unsaved.go",
-		EntityType:      heartbeatpkg.FileType,
-		IsUnsavedEntity: true,
-	}}))
-	assert.True(t, shouldUseProjectConfig([]heartbeatpkg.Heartbeat{{
-		Entity:     "/tmp/main.go",
-		EntityType: heartbeatpkg.FileType,
-	}}))
 }
 
 func internalCommandParams() paramspkg.Params {

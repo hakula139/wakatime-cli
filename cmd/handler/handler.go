@@ -22,9 +22,6 @@ type Config struct {
 	Params       params.Params
 	ParamsLoader func(context.Context, *viper.Viper, params.FlagReadOrder) (params.Params, error)
 	Opts         []Preprocessor
-
-	// SkipProjectConfig uses the provided params without loading local .wakatime files.
-	SkipProjectConfig bool
 }
 
 // New creates a new heartbeat.HandleOption that processes heartbeats
@@ -40,25 +37,18 @@ func New(
 			logger := *log.Extract(ctx) // make it a shallow copy to avoid modifying the original logger
 
 			for _, h := range hh {
-				// shallow copy the params to avoid modifying the original
 				effectiveParams := cfg.Params
 
-				var projectConfigApplied bool
+				p, ok, err := findProjectConfigFile(ctx, v, h.Entity, h.EntityType, h.IsUnsavedEntity, cfg.ParamsLoader)
+				if err != nil {
+					return nil, fmt.Errorf("failed to find project configuration file: %w", err)
+				}
 
-				if !cfg.SkipProjectConfig {
-					p, ok, err := findProjectConfigFile(ctx, v, h.Entity, h.EntityType, h.IsUnsavedEntity, cfg.ParamsLoader)
-					if err != nil {
-						return nil, fmt.Errorf("failed to find project configuration file: %w", err)
-					}
+				if ok {
+					logger.Debugf("found project-level configuration file %s for entity %q", projectConfigFileName, h.Entity)
+					logger.Debugf("project-level params: %s", p)
 
-					if ok {
-						logger.Debugf("found project-level configuration file %s for entity %q",
-							projectConfigFileName, h.Entity)
-						logger.Debugf("project-level params: %s", p)
-
-						effectiveParams = p
-						projectConfigApplied = true
-					}
+					effectiveParams = p
 				}
 
 				chain := heartbeat.NewHandle(noop{})
@@ -74,7 +64,7 @@ func New(
 
 				for _, r := range res {
 					h := r.Heartbeat
-					h.SkipAIBuffering = projectConfigApplied ||
+					h.SkipAIBuffering = ok ||
 						len(effectiveParams.API.KeyPatterns) > 0 ||
 						len(effectiveParams.API.URLPatterns) > 0
 					heartbeats = append(heartbeats, h)
@@ -115,12 +105,10 @@ func findProjectConfigFile(
 
 	v = projectV
 
-	// load project-level configuration file into viper instance
 	if err := ini.ReadInConfig(v, fp); err != nil {
 		return params.Params{}, false, fmt.Errorf("failed to load project-level configuration file: %s", err)
 	}
 
-	// load parameters from viper instance
 	p, err := paramsLoader(ctx, v, params.FlagReadOrderProjectConfigPrecedence)
 	if err != nil {
 		return params.Params{}, false, fmt.Errorf("failed to load project-level parameters: %w", err)

@@ -98,7 +98,7 @@ func SendHeartbeats(
 		return err
 	}
 
-	return sendPreparedHeartbeats(ctx, v, params, queueFilepath, heartbeats, true, loadParams)
+	return sendPreparedHeartbeats(ctx, v, params, queueFilepath, heartbeats, loadParams)
 }
 
 func loadParams(
@@ -264,7 +264,6 @@ func sendPreparedHeartbeats(
 	params params.Params,
 	queueFilepath string,
 	heartbeats []heartbeat.Heartbeat,
-	withProjectConfig bool,
 	paramsLoader func(context.Context, *viper.Viper, params.FlagReadOrder) (params.Params, error),
 ) error {
 	logger := log.Extract(ctx)
@@ -330,10 +329,9 @@ func sendPreparedHeartbeats(
 	}
 
 	handle := handler.New(v, handler.Config{
-		Params:            params,
-		ParamsLoader:      paramsLoader,
-		Opts:              initHandleOptions(),
-		SkipProjectConfig: !withProjectConfig,
+		Params:       params,
+		ParamsLoader: paramsLoader,
+		Opts:         initHandleOptions(),
 	})(sender)
 
 	results, err := handle(ctx, heartbeats)
@@ -374,14 +372,4 @@ func setLogFields(ctx context.Context, params params.Params) {
 	if params.Heartbeat.IsWrite != nil {
 		log.AddField(ctx, "is_write", params.Heartbeat.IsWrite)
 	}
-}
-
-func shouldUseProjectConfig(heartbeats []heartbeat.Heartbeat) bool {
-	for _, h := range heartbeats {
-		if h.EntityType == heartbeat.FileType && !h.IsUnsavedEntity {
-			return true
-		}
-	}
-
-	return false
 }
