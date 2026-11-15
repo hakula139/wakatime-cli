@@ -51,7 +51,10 @@ func TestAIBufferingSurvivesRestartAndDrainsWithoutNewActivity(t *testing.T) {
 				visible, err := ReadHeartbeats(t.Context(), path, 2)
 				require.NoError(t, err)
 				assert.Equal(t, []heartbeat.Heartbeat{first, human}, visible)
-				assert.ElementsMatch(t, []heartbeat.Heartbeat{first, middle, last}, readTestBufferBucket(t, path, "ai_pending"))
+				assert.ElementsMatch(t,
+					[]heartbeat.Heartbeat{first, middle, last},
+					readTestBufferBucket(t, path, "ai_pending"),
+				)
 
 				time.Sleep(30 * time.Second)
 

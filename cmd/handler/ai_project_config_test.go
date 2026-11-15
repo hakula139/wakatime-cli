@@ -105,7 +105,10 @@ func TestCustomRoutingBypassesAIBufferingAfterHidingEntity(t *testing.T) {
 			handle := handler.New(vipertools.MustNew(), handler.Config{
 				Params: p,
 				Opts:   []handler.Preprocessor{handler.WithAPIKeyReplacing(), handler.WithHeartbeatSanitization()},
-			})(offline.WithAIBuffering(queuePath)(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+			})(offline.WithAIBuffering(queuePath)(func(
+				_ context.Context,
+				hh []heartbeat.Heartbeat,
+			) ([]heartbeat.Result, error) {
 				sent = append(sent, hh...)
 				return nil, nil
 			}))
