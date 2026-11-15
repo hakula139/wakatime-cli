@@ -436,18 +436,6 @@ func TestUserAgentProductFields(t *testing.T) {
 	assert.Equal(t, "agent", aiAgentUserAgentToken("agent"))
 }
 
-func TestAddIntPointers(t *testing.T) {
-	one := 1
-	two := 2
-
-	assert.Equal(t, &one, addIntPointers(nil, &one))
-	assert.Equal(t, &one, addIntPointers(&one, nil))
-
-	got := addIntPointers(&one, &two)
-	require.NotNil(t, got)
-	assert.Equal(t, 3, *got)
-}
-
 func TestClaudeHelpers(t *testing.T) {
 	t.Run("json unmarshal panic returns error", func(t *testing.T) {
 		var target panicJSONUnmarshaler

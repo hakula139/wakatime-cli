@@ -1405,8 +1405,6 @@ func replaceAppHeartbeats(heartbeats []heartbeat.Heartbeat) []heartbeat.Heartbea
 		return heartbeats
 	}
 
-	deduped := make([]heartbeat.Heartbeat, 0, len(heartbeats))
-
 	for i, h := range heartbeats {
 		if h.EntityType == heartbeat.FileType && h.Entity != "" {
 			entityBySession[h.AISession] = fileEntity{path: h.Entity, unsaved: h.IsUnsavedEntity}
@@ -1418,35 +1416,12 @@ func replaceAppHeartbeats(heartbeats []heartbeat.Heartbeat) []heartbeat.Heartbea
 			h.EntityType = heartbeat.FileType
 			h.Entity = entity.path
 			h.IsUnsavedEntity = entity.unsaved
-
-			if i > 0 && i+1 < len(heartbeats) && sameHeartbeat(h, heartbeats[i+1]) {
-				mergeHeartbeatCounts(&heartbeats[i+1], h)
-				continue
-			}
-
-			if i > 0 && len(deduped) > 0 && sameHeartbeat(h, deduped[len(deduped)-1]) {
-				mergeHeartbeatCounts(&deduped[len(deduped)-1], h)
-				continue
-			}
 		}
 
-		deduped = append(deduped, h)
+		heartbeats[i] = h
 	}
 
-	return deduped
-}
-
-// sameHeartbeat only combines activity with the same leading product, which
-// identifies the AI model when available. A model switch must keep token
-// counts on its own heartbeat even when the file and session are unchanged.
-func sameHeartbeat(a, b heartbeat.Heartbeat) bool {
-	return a.AISession == b.AISession &&
-		firstUserAgentToken(a.UserAgent) == firstUserAgentToken(b.UserAgent) &&
-		a.Category == b.Category &&
-		a.Entity == b.Entity &&
-		a.EntityType == b.EntityType &&
-		a.IsUnsavedEntity == b.IsUnsavedEntity &&
-		absFloat64(a.Time-b.Time) < 60
+	return heartbeats
 }
 
 func firstUserAgentToken(userAgent string) string {
@@ -1456,68 +1431,6 @@ func firstUserAgentToken(userAgent string) string {
 	}
 
 	return strings.ToLower(fields[0])
-}
-
-func mergeHeartbeatCounts(dst *heartbeat.Heartbeat, src heartbeat.Heartbeat) {
-	dst.AILineChanges = addIntPointers(dst.AILineChanges, src.AILineChanges)
-	dst.HumanLineChanges = addIntPointers(dst.HumanLineChanges, src.HumanLineChanges)
-	dst.AIPromptLength += src.AIPromptLength
-	dst.AIInputTokens += src.AIInputTokens
-	dst.AICachedInputTokens += src.AICachedInputTokens
-
-	dst.AIOutputTokens += src.AIOutputTokens
-	if dst.AISubscriptionPlan == "" {
-		dst.AISubscriptionPlan = src.AISubscriptionPlan
-	}
-
-	if dst.Project == nil || *dst.Project == "" {
-		dst.Project = src.Project
-	}
-
-	if dst.ProjectAlternate == "" {
-		dst.ProjectAlternate = src.ProjectAlternate
-	}
-
-	if dst.Branch == nil || *dst.Branch == "" {
-		dst.Branch = src.Branch
-	}
-
-	if dst.BranchAlternate == "" {
-		dst.BranchAlternate = src.BranchAlternate
-	}
-
-	if dst.Language == nil || *dst.Language == "" {
-		dst.Language = src.Language
-	}
-
-	if dst.LanguageAlternate == "" {
-		dst.LanguageAlternate = src.LanguageAlternate
-	}
-
-	if dst.ProjectOverride == "" {
-		dst.ProjectOverride = src.ProjectOverride
-	}
-
-	if dst.ProjectPath == "" {
-		dst.ProjectPath = src.ProjectPath
-	}
-
-	if dst.ProjectPathOverride == "" {
-		dst.ProjectPathOverride = src.ProjectPathOverride
-	}
-}
-
-func addIntPointers(dst *int, src *int) *int {
-	switch {
-	case dst == nil:
-		return src
-	case src == nil:
-		return dst
-	default:
-		sum := *dst + *src
-
-		return &sum
-	}
 }
 
 func absFloat64(v float64) float64 {

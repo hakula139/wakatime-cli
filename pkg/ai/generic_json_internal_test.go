@@ -322,7 +322,7 @@ func TestGenericAIContainerModelsPreserveSessionAttribution(t *testing.T) {
 	}
 }
 
-func TestGenericAIModelSurvivesMergingAppTokensIntoFile(t *testing.T) {
+func TestGenericAIModelSurvivesRewritingAppEntities(t *testing.T) {
 	transcript := filepath.Join(t.TempDir(), "session.jsonl")
 	contents := strings.Join([]string{
 		`{"timestamp":"2026-08-06T12:00:00Z","session_id":"session-1","cwd":"/workspace/project",` +
@@ -341,17 +341,18 @@ func TestGenericAIModelSurvivesMergingAppTokensIntoFile(t *testing.T) {
 	got, err := parseGenericAITranscript(t.Context(), provider, transcript)
 	require.NoError(t, err)
 	require.Len(t, got, 4)
+	expected := append(Heartbeats(nil), got...)
+	for i := range expected {
+		expected[i].EntityType = heartbeat.FileType
+		expected[i].Entity = filepath.ToSlash(filepath.Join("/workspace/project", "main.go"))
+	}
 
 	got = replaceAppHeartbeats(got)
-	require.Len(t, got, 3)
-	assert.Equal(t, heartbeat.FileType, got[2].EntityType)
-	assert.Equal(t, filepath.ToSlash(filepath.Join("/workspace/project", "main.go")), got[2].Entity)
-	assert.Equal(t, "grok/4.5 cursor/1.128.0 cursor-agent vscode-wakatime/30.2.1", got[2].UserAgent)
-	assert.Equal(t, int64(6), got[2].AIInputTokens)
-	assert.Equal(t, int64(1), got[2].AICachedInputTokens)
-	assert.Equal(t, int64(3), got[2].AIOutputTokens)
-	require.NotNil(t, got[2].AILineChanges)
-	assert.Equal(t, 3, *got[2].AILineChanges)
+
+	assert.Equal(t, expected, got)
+	for _, h := range got {
+		assert.Equal(t, "grok/4.5 cursor/1.128.0 cursor-agent vscode-wakatime/30.2.1", h.UserAgent)
+	}
 }
 
 func TestGenericAIModelSwitchKeepsUsageTokensSeparate(t *testing.T) {

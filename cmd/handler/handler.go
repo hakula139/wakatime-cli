@@ -22,6 +22,9 @@ type Config struct {
 	Params       params.Params
 	ParamsLoader func(context.Context, *viper.Viper, params.FlagReadOrder) (params.Params, error)
 	Opts         []Preprocessor
+
+	// SkipProjectConfig uses the provided params without loading local .wakatime files.
+	SkipProjectConfig bool
 }
 
 // New creates a new heartbeat.HandleOption that processes heartbeats
@@ -40,17 +43,21 @@ func New(
 				// shallow copy the params to avoid modifying the original
 				effectiveParams := cfg.Params
 
-				p, ok, err := findProjectConfigFile(ctx, v, h.Entity, h.EntityType, h.IsUnsavedEntity, cfg.ParamsLoader)
-				if err != nil {
-					return nil, fmt.Errorf("failed to find project configuration file: %w", err)
-				}
+				var projectConfigApplied bool
 
-				if ok {
-					// if project-level configuration file is found, use it
-					logger.Debugf("found project-level configuration file %s for entity %q", projectConfigFileName, h.Entity)
-					logger.Debugf("project-level params: %s", p)
+				if !cfg.SkipProjectConfig {
+					p, ok, err := findProjectConfigFile(ctx, v, h.Entity, h.EntityType, h.IsUnsavedEntity, cfg.ParamsLoader)
+					if err != nil {
+						return nil, fmt.Errorf("failed to find project configuration file: %w", err)
+					}
 
-					effectiveParams = p
+					if ok {
+						logger.Debugf("found project-level configuration file %s for entity %q", projectConfigFileName, h.Entity)
+						logger.Debugf("project-level params: %s", p)
+
+						effectiveParams = p
+						projectConfigApplied = true
+					}
 				}
 
 				chain := heartbeat.NewHandle(noop{})
@@ -65,7 +72,9 @@ func New(
 				}
 
 				for _, r := range res {
-					heartbeats = append(heartbeats, r.Heartbeat)
+					h := r.Heartbeat
+					h.SkipAIBuffering = projectConfigApplied || len(effectiveParams.API.KeyPatterns) > 0 || len(effectiveParams.API.URLPatterns) > 0
+					heartbeats = append(heartbeats, h)
 				}
 			}
 

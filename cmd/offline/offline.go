@@ -66,7 +66,11 @@ func saveHeartbeats(
 	}
 
 	handleOpts := initHandleOptions()
-	sender := heartbeat.NewHandle(Noop{}, filter.WithLengthValidator(), offline.WithQueue(queueFilepath))
+	sender := heartbeat.NewHandle(Noop{},
+		filter.WithLengthValidator(),
+		offline.WithAIBuffering(queueFilepath),
+		offline.WithQueue(queueFilepath),
+	)
 	handle := handler.New(v, handler.Config{
 		Params:       params,
 		ParamsLoader: loadParams,

@@ -1,7 +1,10 @@
 package heartbeat_test
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -12,7 +15,9 @@ import (
 	"time"
 
 	"github.com/gandarez/go-realpath"
+	"github.com/wakatime/wakatime-cli/cmd"
 	cmdheartbeat "github.com/wakatime/wakatime-cli/cmd/heartbeat"
+	"github.com/wakatime/wakatime-cli/cmd/offlinesync"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/ini"
 	"github.com/wakatime/wakatime-cli/pkg/offline"
@@ -28,6 +33,7 @@ func TestRunAISyncActivity_SendsAIHeartbeatsWithoutEntity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("WAKATIME_HOME", home)
 
 	transcriptModifiedAt := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
 
@@ -132,6 +138,13 @@ func TestRunAISyncActivity_SendsAIHeartbeatsWithoutEntity(t *testing.T) {
 	code, err := cmdheartbeat.RunAISyncActivity(t.Context(), v)
 	require.NoError(t, err)
 	assert.Equal(t, 0, code)
+	assert.Zero(t, numCalls)
+
+	queueFilepath, err := offline.QueueFilepath(t.Context(), v)
+	require.NoError(t, err)
+	err = offlinesync.SyncOfflineActivity(t.Context(), v, queueFilepath)
+	require.NoError(t, err)
+
 	assert.Equal(t, 1, numCalls)
 }
 
@@ -141,6 +154,7 @@ func TestRunAISyncActivity_FiltersExcludedAIHeartbeats(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("WAKATIME_HOME", home)
 
 	transcriptModifiedAt := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
 
@@ -205,6 +219,7 @@ func TestRunAISyncActivity_IncludeOverridesExcludeForAIHeartbeats(t *testing.T) 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("WAKATIME_HOME", home)
 
 	transcriptModifiedAt := time.Date(2026, 3, 18, 12, 1, 0, 0, time.UTC)
 
@@ -289,91 +304,124 @@ func TestRunAISyncActivity_IncludeOverridesExcludeForAIHeartbeats(t *testing.T) 
 	code, err := cmdheartbeat.RunAISyncActivity(t.Context(), v)
 	require.NoError(t, err)
 	assert.Equal(t, 0, code)
+	assert.Zero(t, numCalls)
+
+	queueFilepath, err := offline.QueueFilepath(t.Context(), v)
+	require.NoError(t, err)
+	err = offlinesync.SyncOfflineActivity(t.Context(), v, queueFilepath)
+	require.NoError(t, err)
+
 	assert.Equal(t, 1, numCalls)
 }
 
 func TestRunAISyncActivity_SendsAIPromptLengthToAPI(t *testing.T) {
-	resetSingleton(t)
+	for _, customRouting := range []bool{false, true} {
+		t.Run(fmt.Sprintf("custom_routing_%t", customRouting), func(t *testing.T) {
+			resetSingleton(t)
 
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("CODEX_HOME", "")
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("WAKATIME_HOME", home)
+			t.Setenv("CODEX_HOME", "")
 
-	transcriptModifiedAt := time.Date(2026, 3, 28, 11, 33, 14, 0, time.UTC)
+			transcriptModifiedAt := time.Date(2026, 3, 28, 11, 33, 14, 0, time.UTC)
 
-	now := time.Now()
-	transcriptDir := filepath.Join(home, ".codex", "sessions", now.Format("2006"), now.Format("01"), now.Format("02"))
-	require.NoError(t, os.MkdirAll(transcriptDir, 0o755))
+			now := time.Now()
+			transcriptDir := filepath.Join(home, ".codex", "sessions", now.Format("2006"), now.Format("01"), now.Format("02"))
+			require.NoError(t, os.MkdirAll(transcriptDir, 0o755))
 
-	transcriptPath := filepath.Join(transcriptDir, "rollout-2026-03-28T07-33-13-019d3438-39ae-7fb2-8526-d6c02ba3577c.jsonl")
-	transcript := strings.Join([]string{
-		strings.Join([]string{
-			`{"timestamp":"2026-03-28T11:33:14.288Z","type":"session_meta",`,
-			`"payload":{"id":"019d3438-39ae-7fb2-8526-d6c02ba3577c",`,
-			`"cwd":"/root/wakatime-cli","cli_version":"0.116.0-alpha.10"}}`,
-		}, ""),
-		strings.Join([]string{
-			`{"timestamp":"2026-03-28T11:33:14.289Z","type":"response_item",`,
-			`"payload":{"type":"message","role":"user","content":[`,
-			`{"type":"input_text","text":"Please implement the code as described by the comment."}`,
-			`]}}`,
-		}, ""),
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(transcriptPath, []byte(transcript), 0o644))
-	require.NoError(t, os.Chtimes(transcriptPath, transcriptModifiedAt, transcriptModifiedAt))
+			transcriptPath := filepath.Join(transcriptDir, "rollout-2026-03-28T07-33-13-019d3438-39ae-7fb2-8526-d6c02ba3577c.jsonl")
+			transcript := strings.Join([]string{
+				strings.Join([]string{
+					`{"timestamp":"2026-03-28T11:33:14.288Z","type":"session_meta",`,
+					`"payload":{"id":"019d3438-39ae-7fb2-8526-d6c02ba3577c",`,
+					`"cwd":"/root/wakatime-cli","cli_version":"0.116.0-alpha.10"}}`,
+				}, ""),
+				strings.Join([]string{
+					`{"timestamp":"2026-03-28T11:33:14.289Z","type":"response_item",`,
+					`"payload":{"type":"message","role":"user","content":[`,
+					`{"type":"input_text","text":"Please implement the code as described by the comment."}`,
+					`]}}`,
+				}, ""),
+			}, "\n") + "\n"
+			require.NoError(t, os.WriteFile(transcriptPath, []byte(transcript), 0o644))
+			require.NoError(t, os.Chtimes(transcriptPath, transcriptModifiedAt, transcriptModifiedAt))
 
-	testServerURL, router, tearDown := setupTestServer()
-	defer tearDown()
+			testServerURL, router, tearDown := setupTestServer()
+			defer tearDown()
 
-	var numCalls int
+			var numCalls int
 
-	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
-		numCalls++
+			router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
+				numCalls++
 
-		body, err := io.ReadAll(req.Body)
-		require.NoError(t, err)
+				key := "00000000-0000-4000-8000-000000000000"
+				if customRouting {
+					key = "00000000-0000-4000-8000-000000000001"
+				}
 
-		var entities []struct {
-			Entity         string `json:"entity"`
-			AISession      string `json:"ai_session"`
-			AIPromptLength int    `json:"ai_prompt_length"`
-			UserAgent      string `json:"user_agent"`
-		}
+				assert.Equal(t, "Basic "+base64.StdEncoding.EncodeToString([]byte(key)), req.Header.Get("Authorization"))
 
-		require.NoError(t, json.Unmarshal(body, &entities))
-		require.Len(t, entities, 1)
-		assert.Equal(t, "019d3438-39ae-7fb2-8526-d6c02ba3577c", entities[0].AISession)
-		assert.Equal(t, len([]rune("Please implement the code as described by the comment.")), entities[0].AIPromptLength)
-		assert.NotContains(t, entities[0].UserAgent, "Codex/")
+				body, err := io.ReadAll(req.Body)
+				require.NoError(t, err)
 
-		w.WriteHeader(http.StatusCreated)
+				var entities []struct {
+					Entity         string `json:"entity"`
+					EntityType     string `json:"type"`
+					AISession      string `json:"ai_session"`
+					AIPromptLength int    `json:"ai_prompt_length"`
+					UserAgent      string `json:"user_agent"`
+				}
 
-		f, err := os.Open("testdata/api_heartbeats_response.json")
-		require.NoError(t, err)
+				require.NoError(t, json.Unmarshal(body, &entities))
+				require.Len(t, entities, 1)
+				assert.Equal(t, "app", entities[0].EntityType)
+				assert.Equal(t, "019d3438-39ae-7fb2-8526-d6c02ba3577c", entities[0].AISession)
+				assert.Equal(t, len([]rune("Please implement the code as described by the comment.")), entities[0].AIPromptLength)
+				assert.NotContains(t, entities[0].UserAgent, "Codex/")
 
-		defer f.Close()
+				w.WriteHeader(http.StatusCreated)
 
-		_, err = io.Copy(w, f)
-		require.NoError(t, err)
-	})
+				f, err := os.Open("testdata/api_heartbeats_response.json")
+				require.NoError(t, err)
 
-	tmpInternalFile, err := os.CreateTemp(t.TempDir(), "wakatime-internal-config")
-	require.NoError(t, err)
-	require.NoError(t, tmpInternalFile.Close())
+				defer f.Close()
 
-	v := viper.New()
-	v.Set("api-url", testServerURL)
-	v.Set("internal-config", tmpInternalFile.Name())
-	v.Set("key", "00000000-0000-4000-8000-000000000000")
-	v.Set("plugin", "plugin/0.0.1")
-	v.Set("timeout", 5)
-	v.Set("internal.ai_logs_last_parsed_at", time.Date(2026, 3, 28, 11, 0, 0, 0, time.UTC).Format(ini.DateFormat))
+				_, err = io.Copy(w, f)
+				require.NoError(t, err)
+			})
 
-	code, err := cmdheartbeat.RunAISyncActivity(t.Context(), v)
-	require.NoError(t, err)
-	assert.Equal(t, 0, code)
-	assert.Equal(t, 1, numCalls)
+			tmpInternalFile, err := os.CreateTemp(t.TempDir(), "wakatime-internal-config")
+			require.NoError(t, err)
+			require.NoError(t, tmpInternalFile.Close())
+
+			v := viper.New()
+			v.Set("api-url", testServerURL)
+			v.Set("internal-config", tmpInternalFile.Name())
+			v.Set("key", "00000000-0000-4000-8000-000000000000")
+			v.Set("plugin", "plugin/0.0.1")
+			v.Set("timeout", 5)
+			v.Set("internal.ai_logs_last_parsed_at", time.Date(2026, 3, 28, 11, 0, 0, 0, time.UTC).Format(ini.DateFormat))
+			if customRouting {
+				v.Set("project_api_key..*", "00000000-0000-4000-8000-000000000001")
+			}
+
+			code, err := cmdheartbeat.RunAISyncActivity(t.Context(), v)
+			require.NoError(t, err)
+			assert.Equal(t, 0, code)
+			if !customRouting {
+				assert.Zero(t, numCalls)
+
+				queueFilepath, err := offline.QueueFilepath(t.Context(), v)
+				require.NoError(t, err)
+				err = offlinesync.SyncOfflineActivity(t.Context(), v, queueFilepath)
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, 1, numCalls)
+		})
+	}
 }
 
 func TestRunAISyncActivity_SendError(t *testing.T) {
@@ -382,6 +430,7 @@ func TestRunAISyncActivity_SendError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("WAKATIME_HOME", home)
 	t.Setenv("CODEX_HOME", "")
 
 	transcriptModifiedAt := time.Date(2026, 3, 28, 11, 33, 14, 0, time.UTC)
@@ -426,6 +475,7 @@ func TestRunAISyncActivity_UsesAlternateProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("WAKATIME_HOME", home)
 
 	transcriptModifiedAt := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
 
@@ -513,7 +563,81 @@ func TestRunAISyncActivity_UsesAlternateProject(t *testing.T) {
 	code, err := cmdheartbeat.RunAISyncActivity(t.Context(), v)
 	require.NoError(t, err)
 	assert.Equal(t, 0, code)
+	assert.Zero(t, numCalls)
+
+	queueFilepath, err := offline.QueueFilepath(t.Context(), v)
+	require.NoError(t, err)
+	err = offlinesync.SyncOfflineActivity(t.Context(), v, queueFilepath)
+	require.NoError(t, err)
+
 	assert.Equal(t, 1, numCalls)
+}
+
+func TestRunAISyncActivity_EmptyParserBatchFlushesClosedPendingActivity(t *testing.T) {
+	resetSingleton(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("WAKATIME_HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("CODEX_HOME", "")
+
+	testServerURL, router, tearDown := setupTestServer()
+	defer tearDown()
+
+	want := heartbeat.Heartbeat{
+		Entity:        "agent",
+		EntityType:    heartbeat.AppType,
+		Category:      heartbeat.AICodingCategory.String(),
+		AISession:     "session-1",
+		AIInputTokens: 7,
+		Time:          float64(time.Now().Add(-10 * time.Minute).Unix()),
+		UserAgent:     "editor/1.2.3",
+	}
+	var received []heartbeat.Heartbeat
+
+	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
+		require.NoError(t, json.NewDecoder(req.Body).Decode(&received))
+
+		w.WriteHeader(http.StatusCreated)
+
+		f, err := os.Open("testdata/api_heartbeats_response.json")
+		require.NoError(t, err)
+		defer f.Close()
+
+		_, err = io.Copy(w, f)
+		require.NoError(t, err)
+	})
+
+	queueFilepath := filepath.Join(t.TempDir(), "queue.bdb")
+	buffer := offline.WithAIBuffering(queueFilepath)(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		t.Fatal("expected AI activity to remain buffered")
+
+		return nil, nil
+	})
+	_, err := buffer(t.Context(), []heartbeat.Heartbeat{want})
+	require.NoError(t, err)
+
+	v := viper.New()
+	v.Set("api-url", testServerURL)
+	v.Set("heartbeat-rate-limit-seconds", 0)
+	v.Set("internal-config", filepath.Join(t.TempDir(), "internal.cfg"))
+	v.Set("key", "00000000-0000-4000-8000-000000000000")
+	v.Set("offline-queue-file", queueFilepath)
+	v.Set("plugin", "plugin/0.0.1")
+	v.Set("timeout", 5)
+
+	err = cmd.RunCmdWithOfflineSync(t.Context(), v, false, false, cmdheartbeat.RunAISyncActivity)
+	require.NoError(t, err)
+
+	require.Len(t, received, 1)
+	assert.Equal(t, want.Entity, received[0].Entity)
+	assert.Equal(t, want.EntityType, received[0].EntityType)
+	assert.Equal(t, want.Category, received[0].Category)
+	assert.Equal(t, want.AISession, received[0].AISession)
+	assert.Equal(t, want.Time, received[0].Time)
+	assert.Equal(t, want.AIInputTokens, received[0].AIInputTokens)
 }
 
 func TestRunAISyncActivity_RateLimitedWithoutEntity_SavesOffline(t *testing.T) {
@@ -522,6 +646,7 @@ func TestRunAISyncActivity_RateLimitedWithoutEntity_SavesOffline(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("WAKATIME_HOME", home)
 
 	transcriptModifiedAt := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
 

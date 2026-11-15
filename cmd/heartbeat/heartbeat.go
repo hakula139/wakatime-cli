@@ -141,7 +141,7 @@ func buildHandle(ctx context.Context, v *viper.Viper, params params.Params, queu
 	}
 
 	if !params.Offline.Disabled {
-		handleOpts = append(handleOpts, offline.WithQueue(queueFilepath))
+		handleOpts = append(handleOpts, offline.WithAIBuffering(queueFilepath), offline.WithQueue(queueFilepath))
 	}
 
 	handleOpts = append(handleOpts, backoff.WithBackoff(backoff.Config{
@@ -329,20 +329,12 @@ func sendPreparedHeartbeats(
 		return fmt.Errorf("failed to initialize api client: %w", err)
 	}
 
-	opts := initHandleOptions()
-
-	handle := sender
-	if withProjectConfig {
-		handle = handler.New(v, handler.Config{
-			Params:       params,
-			ParamsLoader: paramsLoader,
-			Opts:         opts,
-		})(sender)
-	} else {
-		for i := len(opts) - 1; i >= 0; i-- {
-			handle = opts[i](params)(handle)
-		}
-	}
+	handle := handler.New(v, handler.Config{
+		Params:            params,
+		ParamsLoader:      paramsLoader,
+		Opts:              initHandleOptions(),
+		SkipProjectConfig: !withProjectConfig,
+	})(sender)
 
 	results, err := handle(ctx, heartbeats)
 

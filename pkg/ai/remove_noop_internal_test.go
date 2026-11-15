@@ -8,8 +8,8 @@ import (
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 )
 
-func TestRemoveNoopHeartbeatsReplacesAppHeartbeatsAndMergesDuplicates(t *testing.T) {
-	got := replaceAppHeartbeats([]heartbeat.Heartbeat{
+func TestReplaceAppHeartbeatsPreservesMetricsAndTimestamps(t *testing.T) {
+	input := []heartbeat.Heartbeat{
 		{
 			Entity:         "Codex session",
 			EntityType:     heartbeat.AppType,
@@ -54,35 +54,16 @@ func TestRemoveNoopHeartbeatsReplacesAppHeartbeatsAndMergesDuplicates(t *testing
 			Time:           191,
 			UserAgent:      "Codex/1.0.0",
 		},
-	})
+	}
+	expected := append([]heartbeat.Heartbeat(nil), input...)
+	for i := range expected {
+		expected[i].Entity = "/tmp/main.go"
+		expected[i].EntityType = heartbeat.FileType
+	}
 
-	require.Len(t, got, 3)
+	got := replaceAppHeartbeats(input)
 
-	assert.Equal(t, "/tmp/main.go", got[0].Entity)
-	assert.Equal(t, heartbeat.FileType, got[0].EntityType)
-	require.NotNil(t, got[0].AILineChanges)
-	assert.Equal(t, 2, *got[0].AILineChanges)
-	assert.Nil(t, got[0].HumanLineChanges)
-	assert.Equal(t, 20, got[0].AIPromptLength)
-	assert.Equal(t, int64(10), got[0].AIInputTokens)
-	assert.Equal(t, int64(4), got[0].AIOutputTokens)
-	assert.Equal(t, float64(100), got[0].Time)
-
-	assert.Equal(t, "/tmp/main.go", got[1].Entity)
-	assert.Equal(t, heartbeat.FileType, got[1].EntityType)
-	require.NotNil(t, got[1].AILineChanges)
-	assert.Equal(t, 3, *got[1].AILineChanges)
-	assert.Equal(t, int64(7), got[1].AIInputTokens)
-	assert.Equal(t, int64(5), got[1].AIOutputTokens)
-	assert.Equal(t, float64(130), got[1].Time)
-
-	assert.Equal(t, "/tmp/main.go", got[2].Entity)
-	assert.Equal(t, heartbeat.FileType, got[2].EntityType)
-	require.NotNil(t, got[2].AILineChanges)
-	assert.Equal(t, 6, *got[2].AILineChanges)
-	assert.Equal(t, int64(9), got[2].AIInputTokens)
-	assert.Equal(t, int64(11), got[2].AIOutputTokens)
-	assert.Equal(t, float64(191), got[2].Time)
+	assert.Equal(t, expected, got)
 }
 
 func TestRemoveNoopHeartbeatsDoesNotLeakEntityAcrossSessions(t *testing.T) {
@@ -96,9 +77,6 @@ func TestRemoveNoopHeartbeatsDoesNotLeakEntityAcrossSessions(t *testing.T) {
 			UserAgent:  "Claude/1.0.0",
 		},
 		{
-			// Leading app pulse for session-b, appearing right after session-a's file
-			// heartbeat but far enough in time to not merge with session-b's own file
-			// heartbeat below. It must resolve to session-b's own entity, not session-a's.
 			Entity:     "Claude session",
 			EntityType: heartbeat.AppType,
 			AISession:  "session-b",
@@ -115,8 +93,6 @@ func TestRemoveNoopHeartbeatsDoesNotLeakEntityAcrossSessions(t *testing.T) {
 			UserAgent:  "Claude/1.0.0",
 		},
 		{
-			// session-c never edits a file anywhere in the batch, so its app pulse
-			// must stay untouched rather than steal another session's entity.
 			Entity:     "Claude session",
 			EntityType: heartbeat.AppType,
 			AISession:  "session-c",
