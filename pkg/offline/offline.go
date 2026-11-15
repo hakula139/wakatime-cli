@@ -483,6 +483,7 @@ func CountHeartbeats(ctx context.Context, filepath string) (count int, err error
 	}
 
 	queue.Bucket = aiPendingBucket
+
 	pendingCount, err := queue.Count()
 	if err != nil {
 		return 0, fmt.Errorf("failed to count pending ai heartbeats: %w", err)
@@ -530,6 +531,7 @@ func ReadHeartbeats(ctx context.Context, filepath string, limit int) (hh []heart
 	}
 
 	queue.Bucket = aiPendingBucket
+
 	pending, err := queue.ReadMany(limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read pending ai heartbeats: %w", err)

@@ -328,10 +328,14 @@ func TestRunAISyncActivity_SendsAIPromptLengthToAPI(t *testing.T) {
 			transcriptModifiedAt := time.Date(2026, 3, 28, 11, 33, 14, 0, time.UTC)
 
 			now := time.Now()
-			transcriptDir := filepath.Join(home, ".codex", "sessions", now.Format("2006"), now.Format("01"), now.Format("02"))
+			transcriptDir := filepath.Join(
+				home, ".codex", "sessions", now.Format("2006"), now.Format("01"), now.Format("02"),
+			)
 			require.NoError(t, os.MkdirAll(transcriptDir, 0o755))
 
-			transcriptPath := filepath.Join(transcriptDir, "rollout-2026-03-28T07-33-13-019d3438-39ae-7fb2-8526-d6c02ba3577c.jsonl")
+			transcriptPath := filepath.Join(
+				transcriptDir, "rollout-2026-03-28T07-33-13-019d3438-39ae-7fb2-8526-d6c02ba3577c.jsonl",
+			)
 			transcript := strings.Join([]string{
 				strings.Join([]string{
 					`{"timestamp":"2026-03-28T11:33:14.288Z","type":"session_meta",`,
@@ -378,7 +382,11 @@ func TestRunAISyncActivity_SendsAIPromptLengthToAPI(t *testing.T) {
 				require.Len(t, entities, 1)
 				assert.Equal(t, "app", entities[0].EntityType)
 				assert.Equal(t, "019d3438-39ae-7fb2-8526-d6c02ba3577c", entities[0].AISession)
-				assert.Equal(t, len([]rune("Please implement the code as described by the comment.")), entities[0].AIPromptLength)
+				assert.Equal(
+					t,
+					len([]rune("Please implement the code as described by the comment.")),
+					entities[0].AIPromptLength,
+				)
 				assert.NotContains(t, entities[0].UserAgent, "Codex/")
 
 				w.WriteHeader(http.StatusCreated)
@@ -403,6 +411,7 @@ func TestRunAISyncActivity_SendsAIPromptLengthToAPI(t *testing.T) {
 			v.Set("plugin", "plugin/0.0.1")
 			v.Set("timeout", 5)
 			v.Set("internal.ai_logs_last_parsed_at", time.Date(2026, 3, 28, 11, 0, 0, 0, time.UTC).Format(ini.DateFormat))
+
 			if customRouting {
 				v.Set("project_api_key..*", "00000000-0000-4000-8000-000000000001")
 			}
@@ -410,6 +419,7 @@ func TestRunAISyncActivity_SendsAIPromptLengthToAPI(t *testing.T) {
 			code, err := cmdheartbeat.RunAISyncActivity(t.Context(), v)
 			require.NoError(t, err)
 			assert.Equal(t, 0, code)
+
 			if !customRouting {
 				assert.Zero(t, numCalls)
 
@@ -595,6 +605,7 @@ func TestRunAISyncActivity_EmptyParserBatchFlushesClosedPendingActivity(t *testi
 		Time:          float64(time.Now().Add(-10 * time.Minute).Unix()),
 		UserAgent:     "editor/1.2.3",
 	}
+
 	var received []heartbeat.Heartbeat
 
 	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
@@ -604,6 +615,7 @@ func TestRunAISyncActivity_EmptyParserBatchFlushesClosedPendingActivity(t *testi
 
 		f, err := os.Open("testdata/api_heartbeats_response.json")
 		require.NoError(t, err)
+
 		defer f.Close()
 
 		_, err = io.Copy(w, f)
@@ -611,7 +623,10 @@ func TestRunAISyncActivity_EmptyParserBatchFlushesClosedPendingActivity(t *testi
 	})
 
 	queueFilepath := filepath.Join(t.TempDir(), "queue.bdb")
-	buffer := offline.WithAIBuffering(queueFilepath)(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+	buffer := offline.WithAIBuffering(queueFilepath)(func(
+		_ context.Context,
+		_ []heartbeat.Heartbeat,
+	) ([]heartbeat.Result, error) {
 		t.Fatal("expected AI activity to remain buffered")
 
 		return nil, nil

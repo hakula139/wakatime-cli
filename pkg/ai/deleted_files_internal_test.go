@@ -106,11 +106,13 @@ func TestReplaceAppHeartbeats_DeletionThenRecreation(t *testing.T) {
 		{AISession: "session", Entity: "file.go", EntityType: heartbeat.FileType, Time: 120},
 		{AISession: "session", Entity: "app", EntityType: heartbeat.AppType, AIPromptLength: 20, Time: 130},
 	}
+
 	expected := append([]heartbeat.Heartbeat(nil), input...)
 	for i := range expected {
 		expected[i].Entity = "file.go"
 		expected[i].EntityType = heartbeat.FileType
 	}
+
 	expected[1].IsUnsavedEntity = true
 
 	hh := replaceAppHeartbeats(input)

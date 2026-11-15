@@ -50,8 +50,11 @@ func (q *Queue) PromoteAI(now time.Time) error {
 	}
 
 	cutoff := float64(now.Truncate(heartbeat.AIBufferDuration).Unix())
-	var closed []heartbeat.Heartbeat
-	var ids [][]byte
+
+	var (
+		closed []heartbeat.Heartbeat
+		ids    [][]byte
+	)
 
 	cursor := pending.Cursor()
 

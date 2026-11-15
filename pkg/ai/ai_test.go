@@ -317,11 +317,14 @@ func TestSendHeartbeats_WithAIParsing(t *testing.T) {
 				router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
 					numCalls++
 
-					// check request
 					assert.Equal(t, http.MethodPost, req.Method)
 					assert.Equal(t, []string{"application/json"}, req.Header["Accept"])
 					assert.Equal(t, []string{"application/json"}, req.Header["Content-Type"])
-					assert.Equal(t, []string{"Basic MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw"}, req.Header["Authorization"])
+					assert.Equal(
+						t,
+						[]string{"Basic MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw"},
+						req.Header["Authorization"],
+					)
 					assert.True(t, strings.HasSuffix(req.Header["User-Agent"][0], plugin), fmt.Sprintf(
 						"%q should have suffix %q",
 						req.Header["User-Agent"][0],
@@ -343,6 +346,7 @@ func TestSendHeartbeats_WithAIParsing(t *testing.T) {
 					require.NoError(t, err)
 
 					require.Len(t, entities, 2)
+
 					if entities[0].Entity == local {
 						slices.Reverse(entities)
 					}
@@ -384,7 +388,10 @@ func TestSendHeartbeats_WithAIParsing(t *testing.T) {
 				v.Set("time", 1773835200.1)
 				v.Set("timeout", 5)
 				v.Set("write", true)
-				v.Set("internal.ai_logs_last_parsed_at", time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC).Format(ini.DateFormat))
+				v.Set(
+					"internal.ai_logs_last_parsed_at",
+					time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC).Format(ini.DateFormat),
+				)
 
 				offlineQueueFile, err := os.CreateTemp(t.TempDir(), "")
 				require.NoError(t, err)
@@ -700,9 +707,11 @@ func TestSendHeartbeats_WithAIParsingBatchAppliedOnce(t *testing.T) {
 			require.NoError(t, err)
 
 			require.Len(t, entities, 2)
+
 			if entities[0].Entity == local {
 				slices.Reverse(entities)
 			}
+
 			assert.Equal(t, entity, entities[0].Entity)
 			assert.Equal(t, local, entities[1].Entity)
 
@@ -1062,8 +1071,14 @@ func TestWithAISync_PreservesRawEventsAndMatchesIntermediateActivity(t *testing.
 			{1776297792490, "static/css/index.less", false, 0, 0, 0, 0, 0},
 			{1776297792501, "static/css/index.less", false, 136, 110336, 156, 0, 0},
 		}
+
 		for _, result := range heartbeats {
-			assert.NotEqual(t, humanTime, result.Heartbeat.Time, "human activity within five seconds of an intermediate AI pulse is suppressed")
+			assert.NotEqual(
+				t,
+				humanTime,
+				result.Heartbeat.Time,
+				"human activity within five seconds of an intermediate AI pulse is suppressed",
+			)
 		}
 
 		require.Len(t, heartbeats, len(expected))

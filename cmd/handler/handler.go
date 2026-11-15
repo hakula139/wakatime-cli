@@ -52,7 +52,8 @@ func New(
 					}
 
 					if ok {
-						logger.Debugf("found project-level configuration file %s for entity %q", projectConfigFileName, h.Entity)
+						logger.Debugf("found project-level configuration file %s for entity %q",
+							projectConfigFileName, h.Entity)
 						logger.Debugf("project-level params: %s", p)
 
 						effectiveParams = p
@@ -73,7 +74,9 @@ func New(
 
 				for _, r := range res {
 					h := r.Heartbeat
-					h.SkipAIBuffering = projectConfigApplied || len(effectiveParams.API.KeyPatterns) > 0 || len(effectiveParams.API.URLPatterns) > 0
+					h.SkipAIBuffering = projectConfigApplied ||
+						len(effectiveParams.API.KeyPatterns) > 0 ||
+						len(effectiveParams.API.URLPatterns) > 0
 					heartbeats = append(heartbeats, h)
 				}
 			}

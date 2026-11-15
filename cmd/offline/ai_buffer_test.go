@@ -21,13 +21,16 @@ func TestSaveHeartbeatsPreservesProjectConfiguredAIActivity(t *testing.T) {
 		if configured {
 			name = "project configuration bypass"
 		}
+
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			entity := filepath.Join(dir, "main.go")
 			require.NoError(t, os.WriteFile(entity, []byte("package main\n"), 0600))
+
 			if configured {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, ".wakatime"), nil, 0600))
 			}
+
 			config := filepath.Join(t.TempDir(), "config")
 			require.NoError(t, os.WriteFile(config, nil, 0600))
 			queuePath := filepath.Join(t.TempDir(), "queue.bdb")
@@ -36,6 +39,7 @@ func TestSaveHeartbeatsPreservesProjectConfiguredAIActivity(t *testing.T) {
 			v.Set("entity", entity)
 			v.Set("key", "00000000-0000-4000-8000-000000000000")
 			v.Set("project", "app")
+
 			h := heartbeat.Heartbeat{
 				AISession:       "session-a",
 				AIInputTokens:   3,
@@ -52,17 +56,21 @@ func TestSaveHeartbeatsPreservesProjectConfiguredAIActivity(t *testing.T) {
 
 			db, err := bolt.Open(queuePath, 0600, nil)
 			require.NoError(t, err)
+
 			defer db.Close()
+
 			require.NoError(t, db.Update(func(tx *bolt.Tx) error {
 				for _, bucket := range []string{"heartbeats", "ai_pending"} {
 					queue := offline.NewQueue(tx)
 					queue.Bucket = bucket
 					stored, err := queue.ReadMany(10)
 					require.NoError(t, err)
+
 					if (bucket == "heartbeats") != configured {
 						assert.Empty(t, stored)
 						continue
 					}
+
 					require.Len(t, stored, 1)
 					assert.Equal(t, h.AISession, stored[0].AISession)
 					assert.Equal(t, h.AIInputTokens, stored[0].AIInputTokens)
@@ -72,6 +80,7 @@ func TestSaveHeartbeatsPreservesProjectConfiguredAIActivity(t *testing.T) {
 					require.NotNil(t, stored[0].Project)
 					assert.Equal(t, "app", *stored[0].Project)
 				}
+
 				return nil
 			}))
 		})

@@ -341,6 +341,7 @@ func TestGenericAIModelSurvivesRewritingAppEntities(t *testing.T) {
 	got, err := parseGenericAITranscript(t.Context(), provider, transcript)
 	require.NoError(t, err)
 	require.Len(t, got, 4)
+
 	expected := append(Heartbeats(nil), got...)
 	for i := range expected {
 		expected[i].EntityType = heartbeat.FileType
@@ -350,6 +351,7 @@ func TestGenericAIModelSurvivesRewritingAppEntities(t *testing.T) {
 	got = replaceAppHeartbeats(got)
 
 	assert.Equal(t, expected, got)
+
 	for _, h := range got {
 		assert.Equal(t, "grok/4.5 cursor/1.128.0 cursor-agent vscode-wakatime/30.2.1", h.UserAgent)
 	}

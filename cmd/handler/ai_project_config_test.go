@@ -28,9 +28,16 @@ func TestProjectConfigurationBypassesAIBufferingWithoutLeaking(t *testing.T) {
 	plainEntity := filepath.Join(t.TempDir(), "main.go")
 	require.NoError(t, os.WriteFile(plainEntity, nil, 0600))
 	queuePath := filepath.Join(t.TempDir(), "queue.bdb")
-	var sent []heartbeat.Heartbeat
-	var projectLoads int
-	buffer := offline.WithAIBuffering(queuePath)(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+
+	var (
+		sent         []heartbeat.Heartbeat
+		projectLoads int
+	)
+
+	buffer := offline.WithAIBuffering(queuePath)(func(
+		_ context.Context,
+		hh []heartbeat.Heartbeat,
+	) ([]heartbeat.Result, error) {
 		sent = append(sent, hh...)
 		return nil, nil
 	})
@@ -70,23 +77,30 @@ func TestCustomRoutingBypassesAIBufferingAfterHidingEntity(t *testing.T) {
 	entity := filepath.Join(t.TempDir(), "main.go")
 	require.NoError(t, os.WriteFile(entity, nil, 0600))
 	match := regex.NewRegexpWrap(regexp.MustCompile("^" + regexp.QuoteMeta(entity) + "$"))
+
 	for _, useURLs := range []bool{false, true} {
 		name := "project api key"
 		if useURLs {
 			name = "api urls"
 		}
+
 		t.Run(name, func(t *testing.T) {
 			p := params.Params{API: params.API{
 				Key: "default-key",
 				URL: "https://one.example.com/api/v1",
 			}}
+
 			p.Heartbeat.Sanitize.HideFileNames = []regex.Regex{match}
 			if useURLs {
-				p.API.URLPatterns = []apikey.URLPattern{{Regex: match, APIKey: "routed-key", APIURL: "https://two.example.com/api/v1"}}
+				p.API.URLPatterns = []apikey.URLPattern{
+					{Regex: match, APIKey: "routed-key", APIURL: "https://two.example.com/api/v1"},
+				}
 			} else {
 				p.API.KeyPatterns = []apikey.MapPattern{{Regex: match, APIKey: "routed-key"}}
 			}
+
 			var sent []heartbeat.Heartbeat
+
 			queuePath := filepath.Join(t.TempDir(), "queue.bdb")
 			handle := handler.New(vipertools.MustNew(), handler.Config{
 				Params: p,
@@ -107,12 +121,14 @@ func TestCustomRoutingBypassesAIBufferingAfterHidingEntity(t *testing.T) {
 			h.SkipAIBuffering = true
 			h.APIKey = "routed-key"
 			h.APIURL = "https://one.example.com/api/v1"
+
 			expected := []heartbeat.Heartbeat{h}
 			if useURLs {
 				expected[0].APIKey = "default-key"
 				h.APIURL = "https://two.example.com/api/v1"
 				expected = append(expected, h)
 			}
+
 			assert.ElementsMatch(t, expected, sent)
 			count, err := offline.CountHeartbeats(t.Context(), queuePath)
 			require.NoError(t, err)

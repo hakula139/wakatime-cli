@@ -58,7 +58,9 @@ func TestCompactAIHeartbeatsPreservesMetricsAndActivityBoundaries(t *testing.T) 
 	last.AIInputTokens = 21
 	last.AICachedInputTokens = 33
 	last.AIOutputTokens = 39
-	assert.Equal(t, []heartbeat.Heartbeat{first, emptySession, otherEmptySession, human, prompt, otherPrompt, last, nextDay}, got)
+	expected := []heartbeat.Heartbeat{first, emptySession, otherEmptySession, human, prompt, otherPrompt, last, nextDay}
+	assert.Equal(t, expected, got)
+
 	after, err := json.Marshal(input)
 	require.NoError(t, err)
 	assert.Equal(t, string(before), string(after))
@@ -86,6 +88,7 @@ func TestCompactAIHeartbeatsSeparatesWireIdentity(t *testing.T) {
 			first := compactionHeartbeat(601, 3)
 			middle := compactionHeartbeat(602, 7)
 			change(&middle)
+
 			last := compactionHeartbeat(603, 11)
 
 			got := heartbeat.CompactAIHeartbeats([]heartbeat.Heartbeat{first, middle, last})
@@ -129,6 +132,7 @@ func TestCompactAIHeartbeatsDeduplicatesLogicalRouteCopies(t *testing.T) {
 
 func TestCompactAIHeartbeatsPreservesGrossLineAdditionsAndDeletions(t *testing.T) {
 	var input []heartbeat.Heartbeat
+
 	for i, changes := range [][2]int{{10, 10}, {-5, 7}, {7, -5}, {-2, -2}} {
 		h := compactionHeartbeat(float64(601+i), int64(i+1))
 		h.AILineChanges = heartbeat.PointerTo(changes[0])
@@ -138,19 +142,23 @@ func TestCompactAIHeartbeatsPreservesGrossLineAdditionsAndDeletions(t *testing.T
 
 	got := heartbeat.CompactAIHeartbeats(input)
 
-	var aiAdded, aiDeleted, humanAdded, humanDeleted int
-	var tokens int64
+	var (
+		aiAdded, aiDeleted, humanAdded, humanDeleted int
+		tokens                                       int64
+	)
 	for _, h := range got {
 		tokens += h.AIInputTokens
 		if h.AILineChanges != nil {
 			aiAdded += max(0, *h.AILineChanges)
 			aiDeleted -= min(0, *h.AILineChanges)
 		}
+
 		if h.HumanLineChanges != nil {
 			humanAdded += max(0, *h.HumanLineChanges)
 			humanDeleted -= min(0, *h.HumanLineChanges)
 		}
 	}
+
 	assert.Equal(t, 17, aiAdded)
 	assert.Equal(t, 7, aiDeleted)
 	assert.Equal(t, 17, humanAdded)

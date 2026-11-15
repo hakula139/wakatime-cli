@@ -69,7 +69,9 @@ func CompactAIHeartbeats(heartbeats []Heartbeat) []Heartbeat {
 
 		if h.Time == ordered[group.first].Time {
 			mergeAICounts(&ordered[group.first], h)
+
 			retained[i] = false
+
 			continue
 		}
 

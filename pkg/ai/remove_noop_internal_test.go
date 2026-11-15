@@ -55,6 +55,7 @@ func TestReplaceAppHeartbeatsPreservesMetricsAndTimestamps(t *testing.T) {
 			UserAgent:      "Codex/1.0.0",
 		},
 	}
+
 	expected := append([]heartbeat.Heartbeat(nil), input...)
 	for i := range expected {
 		expected[i].Entity = "/tmp/main.go"

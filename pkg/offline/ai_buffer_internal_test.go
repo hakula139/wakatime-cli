@@ -21,6 +21,7 @@ func TestAIBufferingSurvivesRestartAndDrainsWithoutNewActivity(t *testing.T) {
 		if partitioned {
 			name = "separate invocations"
 		}
+
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "queue.bdb")
@@ -41,6 +42,7 @@ func TestAIBufferingSurvivesRestartAndDrainsWithoutNewActivity(t *testing.T) {
 				} else {
 					stageTestAIBuffer(t, path, []heartbeat.Heartbeat{first, middle, last, first})
 				}
+
 				require.NoError(t, pushHeartbeats(t.Context(), path, dbBucket, []heartbeat.Heartbeat{human}))
 
 				count, err := CountHeartbeats(t.Context(), path)
@@ -52,8 +54,13 @@ func TestAIBufferingSurvivesRestartAndDrainsWithoutNewActivity(t *testing.T) {
 				assert.ElementsMatch(t, []heartbeat.Heartbeat{first, middle, last}, readTestBufferBucket(t, path, "ai_pending"))
 
 				time.Sleep(30 * time.Second)
+
 				var sent []heartbeat.Heartbeat
-				require.NoError(t, Sync(t.Context(), path, 100)(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+
+				require.NoError(t, Sync(t.Context(), path, 100)(func(
+					_ context.Context,
+					hh []heartbeat.Heartbeat,
+				) ([]heartbeat.Result, error) {
 					sent = append(sent, hh...)
 					return acceptedBufferResults(hh), nil
 				}))
@@ -78,6 +85,7 @@ func TestAIBufferingPassesHumanAndUnbufferableAIImmediately(t *testing.T) {
 	configured := bufferedTestHeartbeat(time.Unix(603, 0), 11)
 	configured.SkipAIBuffering = true
 	expected := []heartbeat.Heartbeat{human, emptySession, configured}
+
 	var sent []heartbeat.Heartbeat
 
 	_, err := WithAIBuffering(path)(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
@@ -95,6 +103,7 @@ func TestAIBufferingPassesHumanAndUnbufferableAIImmediately(t *testing.T) {
 func TestQueuePromoteAIIsAtomicAndPreservesOpenAndLateActivity(t *testing.T) {
 	db := openTestQueueDB(t)
 	defer db.Close()
+
 	first := bufferedTestHeartbeat(time.Unix(601, 0), 3)
 	middle := bufferedTestHeartbeat(time.Unix(650, 0), 7)
 	last := bufferedTestHeartbeat(time.Unix(899, 0), 11)
@@ -102,11 +111,14 @@ func TestQueuePromoteAIIsAtomicAndPreservesOpenAndLateActivity(t *testing.T) {
 	prompt.AIPromptLength = 17
 	open := bufferedTestHeartbeat(time.Unix(901, 0), 19)
 	input := []heartbeat.Heartbeat{first, middle, last, prompt, open}
+
 	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
 		pending := NewQueue(tx)
 		pending.Bucket = "ai_pending"
+
 		return pending.PushMany(input)
 	}))
+
 	aborted := errors.New("abort promotion")
 
 	err := db.Update(func(tx *bolt.Tx) error {
@@ -119,20 +131,24 @@ func TestQueuePromoteAIIsAtomicAndPreservesOpenAndLateActivity(t *testing.T) {
 		ready, err := NewQueue(tx).ReadMany(100)
 		require.NoError(t, err)
 		assert.Empty(t, ready)
+
 		pending := NewQueue(tx)
 		pending.Bucket = "ai_pending"
 		stored, err := pending.ReadMany(100)
 		require.NoError(t, err)
 		assert.ElementsMatch(t, input, stored)
+
 		return nil
 	}))
 
 	first.AIInputTokens = 0
 	last.AIInputTokens = 21
 	late := bufferedTestHeartbeat(time.Unix(620, 0), 23)
+
 	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
 		queue := NewQueue(tx)
 		require.NoError(t, queue.PromoteAI(time.Unix(900, 0)))
+
 		pending := NewQueue(tx)
 		pending.Bucket = "ai_pending"
 		require.NoError(t, pending.PushMany([]heartbeat.Heartbeat{late}))
@@ -142,9 +158,11 @@ func TestQueuePromoteAIIsAtomicAndPreservesOpenAndLateActivity(t *testing.T) {
 		ready, err := queue.ReadMany(100)
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []heartbeat.Heartbeat{first, last, prompt, late}, ready)
+
 		stored, err := pending.ReadMany(100)
 		require.NoError(t, err)
 		assert.Equal(t, []heartbeat.Heartbeat{open}, stored)
+
 		return nil
 	}))
 }
@@ -159,9 +177,13 @@ func TestAIBufferingRetriesReadyRecordsWithoutBufferingThemAgain(t *testing.T) {
 		time.Sleep(30 * time.Second)
 		stageTestAIBuffer(t, path, []heartbeat.Heartbeat{first, middle, last})
 		time.Sleep(270 * time.Second)
+
 		var failed heartbeat.Heartbeat
 
-		require.NoError(t, Sync(t.Context(), path, 100)(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		require.NoError(t, Sync(t.Context(), path, 100)(func(
+			_ context.Context,
+			hh []heartbeat.Heartbeat,
+		) ([]heartbeat.Result, error) {
 			results := acceptedBufferResults(hh)
 			for i, h := range hh {
 				if h.AIInputTokens != 0 {
@@ -169,6 +191,7 @@ func TestAIBufferingRetriesReadyRecordsWithoutBufferingThemAgain(t *testing.T) {
 					results[i].Status = http.StatusServiceUnavailable
 				}
 			}
+
 			return results, nil
 		}))
 
@@ -176,11 +199,17 @@ func TestAIBufferingRetriesReadyRecordsWithoutBufferingThemAgain(t *testing.T) {
 		assert.Equal(t, last, failed)
 		assert.Equal(t, []heartbeat.Heartbeat{last}, readTestBufferBucket(t, path, dbBucket))
 		assert.Empty(t, readTestBufferBucket(t, path, "ai_pending"))
+
 		open := bufferedTestHeartbeat(start.Add(305*time.Second), 13)
 		time.Sleep(10 * time.Second)
 		stageTestAIBuffer(t, path, []heartbeat.Heartbeat{open})
+
 		var retried []heartbeat.Heartbeat
-		require.NoError(t, Sync(t.Context(), path, 100)(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+
+		require.NoError(t, Sync(t.Context(), path, 100)(func(
+			_ context.Context,
+			hh []heartbeat.Heartbeat,
+		) ([]heartbeat.Result, error) {
 			retried = append(retried, hh...)
 			return acceptedBufferResults(hh), nil
 		}))
@@ -218,14 +247,19 @@ func readTestBufferBucket(t *testing.T, path, bucket string) []heartbeat.Heartbe
 
 	db, err := bolt.Open(path, 0600, nil)
 	require.NoError(t, err)
+
 	defer db.Close()
+
 	var stored []heartbeat.Heartbeat
+
 	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
 		queue := NewQueue(tx)
 		queue.Bucket = bucket
 		stored, err = queue.ReadMany(100)
+
 		return err
 	}))
+
 	return stored
 }
 
@@ -234,5 +268,6 @@ func acceptedBufferResults(hh []heartbeat.Heartbeat) []heartbeat.Result {
 	for i, h := range hh {
 		results[i] = heartbeat.Result{Status: http.StatusCreated, Heartbeat: h}
 	}
+
 	return results
 }
