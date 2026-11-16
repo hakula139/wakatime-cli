@@ -1,7 +1,11 @@
+# ==================================================================================================
+# wakatime-cli Package
+# ==================================================================================================
+
 {
   lib,
+  buildGo127Module,
   stdenv,
-  buildGoModule,
   testers,
   writableTmpDirAsHomeHook,
   source,
@@ -17,7 +21,7 @@ let
   }Z";
   versionModule = "github.com/wakatime/wakatime-cli/pkg/version";
 in
-buildGoModule (finalAttrs: {
+buildGo127Module (finalAttrs: {
   pname = "wakatime-cli";
   version = lib.trim (builtins.readFile ../VERSION);
   src = source;
@@ -30,7 +34,7 @@ buildGoModule (finalAttrs: {
     "-s"
     "-w"
     "-X ${versionModule}.Version=${finalAttrs.version}"
-    "-X ${versionModule}.Commit=${source.rev or source.dirtyRev}"
+    "-X ${versionModule}.Commit=${source.rev or source.dirtyRev or "unknown"}"
     "-X ${versionModule}.BuildDate=${buildDate}"
     "-X ${versionModule}.OS=${stdenv.hostPlatform.go.GOOS}"
     "-X ${versionModule}.Arch=${stdenv.hostPlatform.go.GOARCH}"
