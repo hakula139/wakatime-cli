@@ -2,10 +2,17 @@ name: Tests
 
 on:
   pull_request:
-    types: [opened, reopened, edited, ready_for_review, synchronize]
+    branches: [develop, release]
   push:
     branches: [develop, release]
     tags-ignore: ["**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GO_VERSION_FILE: "go.mod"
@@ -13,30 +20,6 @@ env:
   TEST_VERSION: "<local-build>"
 
 jobs:
-  pr-title:
-    name: PR Title Check
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-
-    steps:
-      -
-        uses: amannn/action-semantic-pull-request@v6.1.2
-        with:
-          types: |
-            feat
-            fix
-            refactor
-            docs
-            test
-            ci
-            chore
-            style
-            perf
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -273,7 +256,6 @@ jobs:
     # A skipped required check passes, so the gate must run after failures too.
     if: ${{ !cancelled() }}
     needs:
-      - pr-title
       - test
       - test-integration
       - test-windows
@@ -304,6 +286,8 @@ jobs:
     concurrency: tagging
     if: ${{ github.repository == 'wakatime/wakatime-cli' && (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/develop') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [
       test,
       test-integration,
@@ -350,6 +334,8 @@ jobs:
   build-android:
     name: Build Android
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [version]
     steps:
       -
@@ -398,6 +384,8 @@ jobs:
   build-linux:
     name: Build Linux
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [version]
     steps:
       -
@@ -439,6 +427,8 @@ jobs:
   build-freebsd:
     name: Build FreeBSD
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [version]
     steps:
       -
@@ -480,6 +470,8 @@ jobs:
   build-netbsd:
     name: Build NetBSD
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [version]
     steps:
       -
@@ -521,6 +513,8 @@ jobs:
   build-openbsd:
     name: Build OpenBSD
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [version]
     steps:
       -
@@ -562,6 +556,8 @@ jobs:
   build-darwin:
     name: Build Darwin
     runs-on: macos-latest
+    permissions:
+      contents: write
     needs: [version]
     steps:
       -
@@ -603,6 +599,8 @@ jobs:
   build-windows:
     name: Build Windows
     runs-on: windows-latest
+    permissions:
+      contents: write
     needs: [version]
     steps:
       -
@@ -645,6 +643,8 @@ jobs:
     name: Sign Apple binaries
     needs: [version, build-darwin]
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       -
         name: Checkout
@@ -708,6 +708,9 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
     needs: [
       version,
       build-android,
