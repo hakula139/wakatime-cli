@@ -1915,6 +1915,16 @@ func TestFileExperts(t *testing.T) {
 
 	ctx := t.Context()
 
+	commonDir, err := exec.CommandContext(ctx, "git", "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	require.NoError(t, err)
+
+	repoDir := strings.TrimRight(string(commonDir), "\r\n")
+
+	projectName := strings.TrimSuffix(filepath.Base(repoDir), ".git")
+	if filepath.Base(repoDir) == ".git" {
+		projectName = filepath.Base(filepath.Dir(repoDir))
+	}
+
 	var numCalls int
 
 	router.HandleFunc("/users/current/file_experts",
@@ -1939,7 +1949,7 @@ func TestFileExperts(t *testing.T) {
 			expectedBody := fmt.Sprintf(
 				string(expectedBodyTpl),
 				entityPath,
-				"wakatime-cli",
+				projectName,
 				subfolders,
 			)
 
