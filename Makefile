@@ -21,8 +21,8 @@ GOGET=$(GOCMD) get
 
 # linting
 GOLANGCI_LINT_VERSION?=v2.14.0
-GOPATH=$(shell $(GOCMD) env GOPATH)
-GOLANGCI_LINT_DIR=$(GOPATH)/bin
+gopath-separator=$(if $(filter Windows_NT,$(OS)),;,:)
+GOLANGCI_LINT_DIR=$(or $(shell $(GOCMD) env GOBIN),$(shell $(GOCMD) env GOPATH | cut -d "$(gopath-separator)" -f 1)/bin)
 lint-version=$(shell "$(1)" --version 2>/dev/null | awk '{print "v"$$4}')
 
 # Prefer the configured version on PATH, otherwise use the installer destination.
