@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
+	"path/filepath"
+	"time"
 
 	cmdapi "github.com/wakatime/wakatime-cli/cmd/api"
 	"github.com/wakatime/wakatime-cli/pkg/apikey"
@@ -16,6 +19,7 @@ import (
 	"github.com/wakatime/wakatime-cli/pkg/ratelimit"
 	"github.com/wakatime/wakatime-cli/pkg/wakaerror"
 
+	"github.com/juju/mutex"
 	"github.com/spf13/viper"
 )
 
@@ -92,6 +96,17 @@ func syncOfflineActivityLegacy(ctx context.Context, v *viper.Viper, queueFilepat
 		return nil
 	}
 
+	// Protect the legacy queue from deletion while a popped batch is in flight.
+	lock, err := acquireLegacySyncLock(ctx, queueFilepath)
+	switch {
+	case errors.Is(err, os.ErrNotExist), errors.Is(err, mutex.ErrTimeout), errors.Is(err, mutex.ErrCancelled):
+		return nil
+	case err != nil:
+		return fmt.Errorf("failed to acquire legacy queue mutex: %w", err)
+	}
+
+	defer lock.Release()
+
 	if !fileExists(queueFilepath) {
 		return nil
 	}
@@ -123,6 +138,15 @@ func syncOfflineActivityLegacy(ctx context.Context, v *viper.Viper, queueFilepat
 		return err
 	}
 
+	remaining, err := offline.CountHeartbeats(ctx, queueFilepath)
+	if err != nil {
+		return fmt.Errorf("failed to count remaining legacy heartbeats: %w", err)
+	}
+
+	if remaining > 0 {
+		return nil
+	}
+
 	logger := log.Extract(ctx)
 
 	if err := os.Remove(queueFilepath); err != nil {
@@ -130,6 +154,39 @@ func syncOfflineActivityLegacy(ctx context.Context, v *viper.Viper, queueFilepat
 	}
 
 	return nil
+}
+
+func acquireLegacySyncLock(ctx context.Context, queueFilepath string) (mutex.Releaser, error) {
+	resolvedPath, err := filepath.EvalSymlinks(queueFilepath)
+	if err != nil {
+		return nil, err
+	}
+
+	absolutePath, err := filepath.Abs(resolvedPath)
+	if err != nil {
+		return nil, err
+	}
+
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(absolutePath))
+
+	return mutex.Acquire(mutex.Spec{
+		Name:    fmt.Sprintf("wakatime-legacy-sync-%016x", hash.Sum64()),
+		Delay:   time.Millisecond,
+		Timeout: 100 * time.Millisecond,
+		Cancel:  ctx.Done(),
+		Clock:   legacySyncClock{},
+	})
+}
+
+type legacySyncClock struct{}
+
+func (legacySyncClock) After(delay time.Duration) <-chan time.Time {
+	return time.After(delay)
+}
+
+func (legacySyncClock) Now() time.Time {
+	return time.Now()
 }
 
 // SyncOfflineActivity syncs offline activity by sending heartbeats

@@ -1,17 +1,24 @@
 package offlinesync
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
+	"github.com/wakatime/wakatime-cli/pkg/offline"
+
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -109,6 +116,86 @@ func TestSyncOfflineActivityLegacy(t *testing.T) {
 	assert.Equal(t, 1, numCalls)
 }
 
+func TestSyncOfflineActivityLegacy_RetainsUnconfirmedHeartbeats(t *testing.T) {
+	testServerURL, router, tearDown := setupTestServer()
+	defer tearDown()
+
+	batches := make(chan []heartbeat.Heartbeat, 2)
+	releaseResponse := make(chan struct{})
+	unblockResponse := sync.OnceFunc(func() { close(releaseResponse) })
+
+	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
+		var batch []heartbeat.Heartbeat
+		if !assert.NoError(t, json.NewDecoder(req.Body).Decode(&batch)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		batches <- batch
+
+		<-releaseResponse
+		w.WriteHeader(http.StatusCreated)
+		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"accepted"}},201]]}`)
+		assert.NoError(t, err)
+	})
+
+	hh := []heartbeat.Heartbeat{
+		{Entity: "/tmp/main.go", EntityType: heartbeat.FileType, Time: 2000},
+		{Entity: "/tmp/util.go", EntityType: heartbeat.FileType, Time: 1000},
+	}
+
+	queuePath := filepath.Join(t.TempDir(), "legacy.bdb")
+	db, err := bolt.Open(queuePath, 0600, nil)
+	require.NoError(t, err)
+	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
+		return offline.NewQueue(tx).PushMany(hh)
+	}))
+	require.NoError(t, db.Close())
+
+	v := viper.New()
+	v.Set("api-url", testServerURL)
+	v.Set("key", "00000000-0000-4000-8000-000000000000")
+	v.Set("sync-offline-activity", 100)
+
+	firstSync := make(chan error, 1)
+
+	go func() {
+		defer close(firstSync)
+
+		firstSync <- syncOfflineActivityLegacy(t.Context(), v, queuePath)
+	}()
+
+	defer func() {
+		unblockResponse()
+		<-firstSync
+	}()
+
+	select {
+	case batch := <-batches:
+		assert.Equal(t, hh, batch)
+	case err := <-firstSync:
+		t.Fatalf("first sync finished without sending a batch: %v", err)
+	}
+
+	require.NoError(t, syncOfflineActivityLegacy(t.Context(), v, queuePath))
+
+	require.FileExists(t, queuePath)
+	assert.Empty(t, batches)
+
+	unblockResponse()
+	require.NoError(t, <-firstSync)
+
+	stored, err := offline.ReadHeartbeats(t.Context(), queuePath, 2)
+	require.NoError(t, err)
+	assert.Equal(t, hh[1:], stored)
+
+	require.NoError(t, syncOfflineActivityLegacy(t.Context(), v, queuePath))
+
+	require.Len(t, batches, 1)
+	assert.Equal(t, hh[1:], <-batches)
+	assert.NoFileExists(t, queuePath)
+}
+
 func TestSyncOfflineActivityLegacy_InvalidAPIKey(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "")
 	require.NoError(t, err)
@@ -141,6 +228,54 @@ func TestSyncOfflineActivityLegacy_InvalidAPIKey(t *testing.T) {
 	after, err := os.ReadFile(f.Name())
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
+}
+
+func TestSyncOfflineActivityLegacy_InvalidQueuePath(t *testing.T) {
+	queuePath := filepath.Join(t.TempDir(), "legacy\x00.bdb")
+
+	err := syncOfflineActivityLegacy(t.Context(), viper.New(), queuePath)
+
+	require.ErrorIs(t, err, syscall.EINVAL)
+	assert.ErrorContains(t, err, "failed to acquire legacy queue mutex")
+}
+
+func TestSyncOfflineActivityLegacy_PreservesPathOnCountError(t *testing.T) {
+	queuePath := filepath.Join(t.TempDir(), "legacy.bdb")
+	backupPath := queuePath + ".backup"
+	db, err := bolt.Open(queuePath, 0600, nil)
+	require.NoError(t, err)
+	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
+		return offline.NewQueue(tx).PushMany([]heartbeat.Heartbeat{
+			{Entity: "/tmp/main.go", EntityType: heartbeat.FileType, Time: 1000},
+		})
+	}))
+	require.NoError(t, db.Close())
+
+	testServerURL, router, tearDown := setupTestServer()
+	defer tearDown()
+
+	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, _ *http.Request) {
+		if !assert.NoError(t, os.Rename(queuePath, backupPath)) ||
+			!assert.NoError(t, os.Mkdir(queuePath, 0700)) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"accepted"}},201]]}`)
+		assert.NoError(t, err)
+	})
+
+	v := viper.New()
+	v.Set("api-url", testServerURL)
+	v.Set("key", "00000000-0000-4000-8000-000000000000")
+	v.Set("sync-offline-activity", 1)
+
+	err = syncOfflineActivityLegacy(t.Context(), v, queuePath)
+
+	require.ErrorContains(t, err, "failed to count remaining legacy heartbeats")
+	assert.DirExists(t, queuePath)
+	assert.FileExists(t, backupPath)
 }
 
 func setupTestServer() (string, *http.ServeMux, func()) {

@@ -200,20 +200,13 @@ func handleResults(
 	hh []heartbeat.Heartbeat,
 ) (bool, error) {
 	var (
-		err               error
-		withInvalidStatus []heartbeat.Heartbeat
-		stopSending       bool
+		toRequeue   []heartbeat.Heartbeat
+		stopSending bool
 	)
 
 	logger := log.Extract(ctx)
-
-	if len(results) < len(hh) {
-		logger.Warnf("expected %d results from api but received %d", len(hh), len(results))
-	}
-
 	handled := make(map[string]int, len(results))
 
-	// push heartbeats with invalid result status codes to queue
 	for n, result := range results {
 		h, ok := resultHeartbeat(result, hh, n)
 		if !ok {
@@ -240,35 +233,26 @@ func handleResults(
 		}
 
 		if result.Status < http.StatusOK || result.Status > 299 {
-			withInvalidStatus = append(withInvalidStatus, h)
+			toRequeue = append(toRequeue, h)
 
 			logger.Debugf("heartbeat %d has invalid status code %d: %s", n, result.Status, strings.Join(result.Errors, ", "))
 		}
 	}
 
-	if len(withInvalidStatus) > 0 {
-		logger.Debugf("pushing %d heartbeat(s) with invalid result to queue", len(withInvalidStatus))
-
-		stopSending = true
-
-		err = pushHeartbeatsWithRetry(ctx, filepath, dbBucket, withInvalidStatus)
-		if err != nil {
-			logger.Warnf("failed to push heartbeats with invalid status to queue: %s", err)
-		}
-	}
-
-	// handle leftover heartbeats
 	leftovers := missingResultHeartbeats(hh, handled)
 	if len(leftovers) > 0 {
 		logger.Warnf("missing %d results from api.", len(leftovers))
 
-		err = pushHeartbeatsWithRetry(ctx, filepath, dbBucket, leftovers)
-		if err != nil {
-			logger.Warnf("failed to push leftover heartbeats to queue: %s", err)
-		}
+		toRequeue = append(toRequeue, leftovers...)
 	}
 
-	return stopSending, err
+	if len(toRequeue) == 0 {
+		return stopSending, nil
+	}
+
+	logger.Debugf("pushing %d heartbeat(s) with missing or invalid results to queue", len(toRequeue))
+
+	return true, pushHeartbeatsWithRetry(ctx, filepath, dbBucket, toRequeue)
 }
 
 func resultHeartbeat(result heartbeat.Result, hh []heartbeat.Heartbeat, n int) (heartbeat.Heartbeat, bool) {

@@ -1238,23 +1238,12 @@ func TestSync_DeletesDuplicates(t *testing.T) {
 	assert.Zero(t, count)
 }
 
-func TestSync_RequeuesHeartbeatMissingResultByAssociation(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "")
-	require.NoError(t, err)
-
-	defer f.Close()
-
-	db, err := bolt.Open(f.Name(), 0600, nil)
-	require.NoError(t, err)
-
-	tx, err := db.Begin(true)
-	require.NoError(t, err)
-
+func TestSync_StopsOnMissingResults(t *testing.T) {
 	hh := []heartbeat.Heartbeat{
 		{
-			Entity:     "/tmp/a.go",
+			Entity:     "/tmp/c.go",
 			EntityType: heartbeat.FileType,
-			Time:       1000,
+			Time:       3000,
 			UserAgent:  "wakatime/test",
 		},
 		{
@@ -1264,45 +1253,68 @@ func TestSync_RequeuesHeartbeatMissingResultByAssociation(t *testing.T) {
 			UserAgent:  "wakatime/test",
 		},
 		{
-			Entity:     "/tmp/c.go",
+			Entity:     "/tmp/a.go",
 			EntityType: heartbeat.FileType,
-			Time:       3000,
+			Time:       1000,
 			UserAgent:  "wakatime/test",
 		},
 	}
 
-	q := offline.NewQueue(tx)
-	require.NoError(t, q.PushMany(hh))
-	require.NoError(t, tx.Commit())
-	require.NoError(t, db.Close())
+	tests := map[string]struct {
+		statuses  [3]int
+		remaining []heartbeat.Heartbeat
+	}{
+		"partial response": {
+			statuses:  [3]int{http.StatusCreated, 0, http.StatusCreated},
+			remaining: hh[1:2],
+		},
+		"empty response": {
+			remaining: hh,
+		},
+		"missing and rejected heartbeats": {
+			statuses:  [3]int{http.StatusBadRequest, 0, http.StatusTooManyRequests},
+			remaining: hh[1:],
+		},
+	}
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 3)
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			queuePath := filepath.Join(t.TempDir(), "offline.bdb")
+			db, err := bolt.Open(queuePath, 0600, nil)
+			require.NoError(t, err)
+			require.NoError(t, db.Update(func(tx *bolt.Tx) error {
+				return offline.NewQueue(tx).PushMany(hh)
+			}))
+			require.NoError(t, db.Close())
 
-	var sent []heartbeat.Heartbeat
+			var requests int
 
-	err = syncFn(func(_ context.Context, batch []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-		require.Len(t, batch, 3)
-		sent = append([]heartbeat.Heartbeat(nil), batch...)
+			err = offline.Sync(t.Context(), queuePath, 100)(func(
+				_ context.Context,
+				batch []heartbeat.Heartbeat,
+			) ([]heartbeat.Result, error) {
+				requests++
+				require.Equal(t, 1, requests)
+				require.Equal(t, hh, batch)
 
-		return []heartbeat.Result{
-			{
-				Status:    http.StatusCreated,
-				ID:        "id-0",
-				Heartbeat: batch[0],
-			},
-			{
-				Status:    http.StatusCreated,
-				ID:        "id-2",
-				Heartbeat: batch[2],
-			},
-		}, nil
-	})
-	require.NoError(t, err)
+				var results []heartbeat.Result
 
-	stored, err := offline.ReadHeartbeats(t.Context(), f.Name(), 10)
-	require.NoError(t, err)
-	require.Len(t, stored, 1)
-	assert.Equal(t, sent[1].ID(), stored[0].ID())
+				for i, status := range test.statuses {
+					if status != 0 {
+						results = append(results, heartbeat.Result{Status: status, Heartbeat: batch[i]})
+					}
+				}
+
+				return results, nil
+			})
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, requests)
+			stored, err := offline.ReadHeartbeats(t.Context(), queuePath, 10)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, test.remaining, stored)
+		})
+	}
 }
 
 func TestCountHeartbeats(t *testing.T) {
