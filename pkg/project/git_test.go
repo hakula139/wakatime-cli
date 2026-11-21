@@ -36,23 +36,47 @@ func TestGit_Detect(t *testing.T) {
 	}, result)
 }
 
-func TestGit_Detect_GitRemoteTrailingSpaces(t *testing.T) {
-	fp := setupTestGitBasic(t)
-	configPath := filepath.Join(fp, "wakatime-cli/.git/config")
-	config := []byte("[remote \"origin\"]\n\turl = git@github.com:wakatime/wakatime-cli.git  \n")
-	err := os.WriteFile(configPath, config, 0600)
-	require.NoError(t, err)
-
-	g := project.Git{
-		Filepath:             filepath.Join(fp, "wakatime-cli/src/pkg/file.go"),
-		ProjectFromGitRemote: true,
+func TestGit_Detect_GitRemote(t *testing.T) {
+	tests := []struct {
+		name    string
+		remote  string
+		project string
+	}{
+		{"SCP with trailing spaces", "git@example.org:owner/repo.git  ", "owner/repo"},
+		{"SCP with inline comment", "git@example.org:owner/repo.git # comment", "owner/repo"},
+		{"SCP without user", "example.org:owner/repo.git", "owner/repo"},
+		{"SCP with IPv6", "git@[2001:db8::1]:owner/repo.git", "owner/repo"},
+		{"quoted HTTPS", `"https://user:example@example.org/owner/repo.git?key=example#example" ; comment`, "owner/repo"},
+		{"SSH with port", "ssh://git@example.org:2222/owner/repo.git", "owner/repo"},
+		{"Git with nested path", "git://example.org/group/team/repo.git", "group/team/repo"},
+		{"unquoted URL with quoted path", `git@example.org:owner/"repo.git"`, "wakatime-cli"},
+		{"quoted URL with unquoted suffix", `"git@example.org:owner/"repo.git`, "wakatime-cli"},
+		{"malformed HTTPS", "https://user:example@%zz/owner/repo.git", "wakatime-cli"},
+		{"local URL", "file:///repos/owner/repo.git", "wakatime-cli"},
+		{"local path with colon", "./repos:local/repo.git", "wakatime-cli"},
+		{"Windows local path", `C:\repos\repo.git`, "wakatime-cli"},
+		{"remote helper", "custom::example.org/owner/repo.git", "wakatime-cli"},
 	}
 
-	result, detected, err := g.Detect(t.Context())
-	require.NoError(t, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fp := setupTestGitBasic(t)
+			configPath := filepath.Join(fp, "wakatime-cli/.git/config")
+			config := []byte(fmt.Sprintf("[remote \"origin\"]\n\turl = %s\n", test.remote))
+			require.NoError(t, os.WriteFile(configPath, config, 0600))
 
-	assert.True(t, detected)
-	assert.Equal(t, "wakatime/wakatime-cli", result.Project)
+			g := project.Git{
+				Filepath:             filepath.Join(fp, "wakatime-cli/src/pkg/file.go"),
+				ProjectFromGitRemote: true,
+			}
+
+			result, detected, err := g.Detect(t.Context())
+			require.NoError(t, err)
+
+			assert.True(t, detected)
+			assert.Equal(t, test.project, result.Project)
+		})
+	}
 }
 
 func TestGit_Detect_BranchWithSlash(t *testing.T) {
@@ -221,29 +245,40 @@ func TestGit_Detect_WorktreeGitRemote(t *testing.T) {
 }
 
 func TestGit_Detect_Worktree_BareRepo(t *testing.T) {
-	fp := setupTestGitWorktreeBareRepo(t)
-
-	g := project.Git{
-		Filepath: filepath.Join(fp, "wakatime-cli/master/src/pkg/file.go"),
+	tests := []struct {
+		name    string
+		repoDir string
+	}{
+		{"extensionless", "wakatime-cli"},
+		{"dot git suffix", "wakatime-cli.git"},
+		{"dot git in parent", filepath.Join("archives.git", "wakatime-cli")},
 	}
 
-	result, detected, err := g.Detect(t.Context())
-	require.NoError(t, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repoDir := setupTestGitWorktreeBareRepo(t, test.repoDir)
+			g := project.Git{
+				Filepath: filepath.Join(repoDir, "master/src/pkg/file.go"),
+			}
 
-	assert.True(t, detected)
-	assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
-	assert.Equal(t, project.Result{
-		Project: "wakatime-cli",
-		Branch:  "feature/api",
-		Folder:  result.Folder,
-	}, result)
+			result, detected, err := g.Detect(t.Context())
+			require.NoError(t, err)
+
+			assert.True(t, detected)
+			assert.Equal(t, project.Result{
+				Project: "wakatime-cli",
+				Branch:  "feature/api",
+				Folder:  repoDir,
+			}, result)
+		})
+	}
 }
 
 func TestGit_Detect_WorktreeGitRemote_BareRepo(t *testing.T) {
-	fp := setupTestGitWorktreeBareRepo(t)
+	repoDir := setupTestGitWorktreeBareRepo(t, "wakatime-cli.git")
 
 	g := project.Git{
-		Filepath:             filepath.Join(fp, "wakatime-cli/master/src/pkg/file.go"),
+		Filepath:             filepath.Join(repoDir, "master/src/pkg/file.go"),
 		ProjectFromGitRemote: true,
 	}
 
@@ -251,11 +286,10 @@ func TestGit_Detect_WorktreeGitRemote_BareRepo(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, detected)
-	assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
 	assert.Equal(t, project.Result{
 		Project: "wakatime/wakatime-cli",
 		Branch:  "feature/api",
-		Folder:  result.Folder,
+		Folder:  repoDir,
 	}, result)
 }
 
@@ -561,7 +595,9 @@ func setupTestGitWorktree(t *testing.T) (fp string) {
 	return tmpDir
 }
 
-func setupTestGitWorktreeBareRepo(t *testing.T) (fp string) {
+func setupTestGitWorktreeBareRepo(t *testing.T, repoPath string) string {
+	t.Helper()
+
 	tmpDir := t.TempDir()
 
 	tmpDir, err := realpath.Realpath(tmpDir)
@@ -571,36 +607,26 @@ func setupTestGitWorktreeBareRepo(t *testing.T) (fp string) {
 		tmpDir = windows.FormatFilePath(tmpDir)
 	}
 
-	// Create directories
-	err = os.MkdirAll(filepath.Join(tmpDir, "wakatime-cli/worktrees/master"), os.FileMode(int(0700)))
+	repoDir := filepath.Join(tmpDir, repoPath)
+	gitdir := filepath.Join(repoDir, "worktrees/master")
+	worktree := filepath.Join(repoDir, "master")
+
+	err = os.MkdirAll(gitdir, 0700)
 	require.NoError(t, err)
 
-	err = os.MkdirAll(filepath.Join(tmpDir, "wakatime-cli/master/src/pkg"), os.FileMode(int(0700)))
+	err = os.MkdirAll(filepath.Join(worktree, "src/pkg"), 0700)
 	require.NoError(t, err)
 
-	// Create fake file
-	tmpFile, err := os.Create(filepath.Join(tmpDir, "wakatime-cli/master/src/pkg/file.go"))
-	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(worktree, "src/pkg/file.go"), nil, 0600))
 
-	defer tmpFile.Close()
+	copyFile(t, "testdata/git_basic/config", filepath.Join(repoDir, "config"))
+	copyFile(t, "testdata/git_worktree/HEAD", filepath.Join(repoDir, "HEAD"))
 
-	// Setup basic git
-	copyFile(t, "testdata/git_basic/config", filepath.Join(tmpDir, "wakatime-cli/config"))
-	copyFile(t, "testdata/git_worktree/HEAD", filepath.Join(tmpDir, "wakatime-cli/HEAD"))
+	copyFile(t, "testdata/git_worktree/HEAD2", filepath.Join(gitdir, "HEAD"))
+	copyFile(t, "testdata/git_worktree/commondir", filepath.Join(gitdir, "commondir"))
+	require.NoError(t, os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: "+gitdir), 0600))
 
-	// Setup git worktree
-	copyFile(t, "testdata/git_worktree/HEAD2", filepath.Join(tmpDir, "wakatime-cli/worktrees/master/HEAD"))
-	copyFile(t, "testdata/git_worktree/commondir", filepath.Join(tmpDir, "wakatime-cli/worktrees/master/commondir"))
-
-	tmpFile, err = os.Create(filepath.Join(tmpDir, "wakatime-cli/master/.git"))
-	require.NoError(t, err)
-
-	defer tmpFile.Close()
-
-	_, err = fmt.Fprintf(tmpFile, "gitdir: %s/wakatime-cli/worktrees/master", tmpDir)
-	require.NoError(t, err)
-
-	return tmpDir
+	return repoDir
 }
 
 func setupTestGitSubmodule(t *testing.T) (fp string) {

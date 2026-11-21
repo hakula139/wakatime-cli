@@ -63,15 +63,18 @@ func TestGitRemoteHelperBranches(t *testing.T) {
 	configPath := filepath.Join(root, ".git", "config")
 	require.NoError(t, os.MkdirAll(filepath.Dir(configPath), 0700))
 	require.NoError(t, os.WriteFile(configPath, []byte(strings.Join([]string{
-		"[remote \"origin\"]",
-		"	url = git@github.com:wakatime/wakatime-cli.git",
+		"[remote \"ORIGIN\"]",
+		"\turl = git@example.org:other/repo.git",
+		"[REMOTE \"origin\"] ; comment",
+		"\tURL = git@example.org:owner/repo.git",
+		"\turl = git@example.org:other/repo.git",
 		"[branch \"main\"]",
 	}, "\n")), 0600))
 
 	remote, err := findGitRemote(ctx, configPath)
 	require.NoError(t, err)
-	assert.Equal(t, "wakatime/wakatime-cli", remote)
-	assert.Equal(t, "wakatime/wakatime-cli", projectOrRemote(ctx, "project", true, filepath.Dir(configPath)))
+	assert.Equal(t, "owner/repo", remote)
+	assert.Equal(t, "owner/repo", projectOrRemote(ctx, "project", true, filepath.Dir(configPath)))
 
 	require.NoError(t, os.WriteFile(configPath, []byte(strings.Join([]string{
 		"[remote \"origin\"]",
@@ -81,10 +84,23 @@ func TestGitRemoteHelperBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, remote)
 
-	require.NoError(t, os.WriteFile(configPath, []byte(strings.Join([]string{
-		"[remote \"origin\"]",
-		"	url = no-colon",
-	}, "\n")), 0600))
-	_, err = findGitRemote(ctx, configPath)
-	require.Error(t, err)
+	invalidURLs := []struct {
+		name    string
+		value   string
+		message string
+	}{
+		{"malformed HTTPS", "https://user:example@%zz/owner/repo.git", "invalid Git remote URL"},
+		{"unterminated quote", `"https://user:example@example.org/owner/repo.git`, "invalid quoted Git remote URL"},
+	}
+
+	for _, test := range invalidURLs {
+		t.Run(test.name, func(t *testing.T) {
+			config := "[remote \"origin\"]\n\turl = " + test.value + "\n"
+			require.NoError(t, os.WriteFile(configPath, []byte(config), 0600))
+
+			remote, err := findGitRemote(ctx, configPath)
+			require.EqualError(t, err, test.message)
+			assert.Empty(t, remote)
+		})
+	}
 }
