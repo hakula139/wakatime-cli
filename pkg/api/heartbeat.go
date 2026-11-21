@@ -16,8 +16,8 @@ import (
 )
 
 // SendHeartbeats sends a bulk of heartbeats to the wakatime api and returns the result.
-// The API does not guarantuee the setting of the Heartbeat property of the result.
-// On certain errors, like 429/too many heartbeats, this is omitted and not set.
+// Results are associated with the corresponding heartbeat from each destination request.
+// If a destination request fails, results from previous destinations are returned with the error.
 //
 // ErrRequest is returned upon request failure with no received response from api.
 // ErrAuth is returned upon receiving a 401 Unauthorized api response.
@@ -47,18 +47,21 @@ func (c *Client) SendHeartbeats(ctx context.Context, heartbeats []heartbeat.Hear
 
 		res, err := c.sendHeartbeats(ctx, url, hh)
 		if err != nil {
-			return nil, err
+			return results, err
 		}
 
-		for i := range res {
-			if i >= len(hh) {
-				break
-			}
-
-			res[i].Heartbeat = hh[i]
+		matched := res[:min(len(res), len(hh))]
+		for i := range matched {
+			matched[i].Heartbeat = hh[i]
 		}
 
-		results = append(results, res...)
+		results = append(results, matched...)
+
+		if len(res) > len(hh) {
+			return results, Err{Err: fmt.Errorf(
+				"received %d heartbeat results, request batch size %d", len(res), len(hh),
+			)}
+		}
 	}
 
 	return results, nil

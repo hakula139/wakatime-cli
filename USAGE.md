@@ -206,6 +206,8 @@ With this configuration:
 - When no api_url or no api_key are present(`.* = `), the default api_key and api_url are used
 - ⁠Files not matching the work or personal regex patterns are sent to both the default api url and your-backup-server.com (duplicated/tee'd)
 
+The CLI queues unsent activity when the stored entity and global configuration reproduce all selected API destinations, including mirrors. After a failed or unconfirmed send, the CLI queues the heartbeat only when retrying reaches the same single destination. The CLI reports an error if project-local routing, a hidden path, or multiple destinations prevent a safe retry.
+
 ### Api Key Environment Variable
 
 If a `WAKATIME_API_KEY` env var exists, wakatime-cli will use its value as the api key.

@@ -416,14 +416,8 @@ func TestSyncOfflineActivity_MultipleApiKey(t *testing.T) {
 			assert.Equal(t, []string{"Basic MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAx"}, req.Header["Authorization"])
 		}
 
-		// send response
-		f, err := os.Open("testdata/api_heartbeats_response.json")
-		require.NoError(t, err)
-
-		defer f.Close()
-
 		w.WriteHeader(http.StatusCreated)
-		_, err = io.Copy(w, f)
+		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"go"}},201],[{"data":{"id":"python"}},201]]}`)
 		require.NoError(t, err)
 	})
 

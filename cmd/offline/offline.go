@@ -15,23 +15,20 @@ import (
 	"github.com/spf13/viper"
 )
 
-var errSkipSending = errors.New("skip sending heartbeats and only save to offline db")
-
 // SaveHeartbeats saves heartbeats to the offline db without trying to send to the API.
-// Used when we have more heartbeats than `offline.SendLimit`, when we couldn't send
-// heartbeats to the API, or the API returned an auth error.
+// Used for raw heartbeats when configuration or API parameters could not be loaded.
 func SaveHeartbeats(
 	ctx context.Context,
 	v *viper.Viper,
 	queueFilepath string,
 	heartbeats []heartbeat.Heartbeat,
 ) error {
-	params, err := loadParams(ctx, v, params.FlagReadOrderFlagPrecedence)
+	loaded, err := loadParams(ctx, v, params.FlagReadOrderFlagPrecedence, params.LoadHeartbeatParams)
 	if err != nil {
 		return fmt.Errorf("failed to load command parameters: %w", err)
 	}
 
-	return saveHeartbeats(ctx, v, queueFilepath, heartbeats, params)
+	return saveHeartbeats(ctx, v, queueFilepath, heartbeats, loaded)
 }
 
 // SaveHeartbeatsWithParams saves heartbeats to the offline db using already loaded command params.
@@ -50,14 +47,14 @@ func saveHeartbeats(
 	v *viper.Viper,
 	queueFilepath string,
 	heartbeats []heartbeat.Heartbeat,
-	params params.Params,
+	loaded params.Params,
 ) error {
 	logger := log.Extract(ctx)
 
-	setLogFields(ctx, params)
-	logger.Debugf("params: %s", params)
+	setLogFields(ctx, loaded)
+	logger.Debugf("params: %s", loaded)
 
-	if params.Offline.Disabled {
+	if loaded.Offline.Disabled {
 		return errors.New("saving to offline db disabled")
 	}
 
@@ -66,23 +63,28 @@ func saveHeartbeats(
 	}
 
 	handleOpts := initHandleOptions()
-	sender := heartbeat.NewHandle(Noop{},
-		filter.WithLengthValidator(),
-		offline.WithAIBuffering(queueFilepath),
-		offline.WithQueue(queueFilepath),
-	)
+	store := offline.QueueUnsent(queueFilepath, loaded.API.Routing())
+	sender := filter.WithLengthValidator()(offline.WithAIBuffering(queueFilepath)(store))
 	handle := handler.New(v, handler.Config{
-		Params:       params,
-		ParamsLoader: loadParams,
-		Opts:         handleOpts,
+		Params: loaded,
+		ParamsLoader: func(ctx context.Context, v *viper.Viper, order params.FlagReadOrder) (params.Params, error) {
+			project, err := loadParams(ctx, v, order, params.LoadHeartbeatProcessingParams)
+			if err != nil {
+				return params.Params{}, err
+			}
+
+			if project.API.Key == "" {
+				return params.Params{}, errors.New("offline queue cannot determine project API routing")
+			}
+
+			return project, nil
+		},
+		Opts: handleOpts,
 	})(sender)
 
 	_, err := handle(ctx, heartbeats)
-	if err != nil && !errors.Is(err, errSkipSending) {
-		return err
-	}
 
-	return nil
+	return err
 }
 
 func initHandleOptions() []handler.Preprocessor {
@@ -92,6 +94,7 @@ func initHandleOptions() []handler.Preprocessor {
 		handler.WithHeartbeatFiltering(),
 		handler.WithAIFiltering(),
 		handler.WithRemoteDetection(),
+		handler.WithAPIKeyReplacing(),
 		handler.WithFileStatsDetection(),
 		handler.WithLanguageDetection(),
 		handler.WithDependencyDetection(),
@@ -107,6 +110,7 @@ func loadParams(
 	ctx context.Context,
 	v *viper.Viper,
 	order params.FlagReadOrder,
+	loadHeartbeatParams func(context.Context, *viper.Viper, params.FlagReadOrder) (params.Heartbeat, error),
 ) (params.Params, error) {
 	if v == nil {
 		return params.Params{}, errors.New("viper instance unset")
@@ -120,9 +124,9 @@ func loadParams(
 		return params.Params{}, fmt.Errorf("failed to load ai params: %w", err)
 	}
 
-	heartbeatParams, err := params.LoadHeartbeatParams(ctx, v, order)
+	heartbeatParams, err := loadHeartbeatParams(ctx, v, order)
 	if err != nil {
-		return params.Params{}, fmt.Errorf("failed to load heartbeat params: %s", err)
+		return params.Params{}, fmt.Errorf("failed to load heartbeat params: %w", err)
 	}
 
 	return params.Params{
@@ -148,12 +152,4 @@ func setLogFields(ctx context.Context, params params.Params) {
 	if params.Heartbeat.IsWrite != nil {
 		log.AddField(ctx, "is_write", params.Heartbeat.IsWrite)
 	}
-}
-
-// Noop is a noop api client, used by offline.SaveHeartbeats.
-type Noop struct{}
-
-// SendHeartbeats always returns an error.
-func (Noop) SendHeartbeats(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-	return nil, errSkipSending
 }

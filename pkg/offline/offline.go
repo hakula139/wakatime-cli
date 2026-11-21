@@ -15,6 +15,8 @@ import (
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/viper"
+	"github.com/wakatime/wakatime-cli/pkg/api"
+	"github.com/wakatime/wakatime-cli/pkg/apikey"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/ini"
 	"github.com/wakatime/wakatime-cli/pkg/log"
@@ -48,47 +50,122 @@ const (
 	readDedupeWindowSeconds = 1
 )
 
+// ErrUnreplayableRoute reports that offline storage cannot preserve a heartbeat's API route.
+var ErrUnreplayableRoute = errors.New("offline queue cannot preserve API routing")
+
 // WithQueue initializes and returns a heartbeat handle option, which can be
 // used in a heartbeat processing pipeline for automatic handling of failures
 // of heartbeat sending to the API. Upon inability to send due to missing or
 // failing connection to API, failed sending or errors returned by API, the
-// heartbeats will be temporarily stored in a DB and sending will be retried
-// at next usages of the wakatime cli.
-func WithQueue(filepath string) heartbeat.HandleOption {
+// replayable heartbeats are stored in a DB for retry on the next sync.
+func WithQueue(filepath string, routing apikey.Config) heartbeat.HandleOption {
+	retry := queueForRetry(filepath, routing)
+	unsent := QueueUnsent(filepath, routing)
+
 	return func(next heartbeat.Handle) heartbeat.Handle {
 		return func(ctx context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-			logger := log.Extract(ctx)
-			// logger.Debugf("execute offline queue with file %s", filepath)
-
 			if len(hh) == 0 {
-				logger.Debugln("abort execution, as there are no heartbeats ready for sending")
-
 				return nil, nil
 			}
 
-			results, err := next(ctx, hh)
-			if err != nil {
-				logger.Debugf("pushing %d heartbeat(s) to queue after error: %s", len(hh), err)
+			results, sendErr := next(ctx, hh)
 
-				requeueErr := pushHeartbeatsWithRetry(ctx, filepath, dbBucket, hh)
-				if requeueErr != nil {
-					return nil, fmt.Errorf(
-						"failed to push heartbeats to queue: %w",
-						requeueErr,
-					)
-				}
+			var (
+				backoffErr api.ErrBackoff
+				queueErr   error
+			)
 
-				return nil, err
+			if errors.As(sendErr, &backoffErr) {
+				_, queueErr = unsent(ctx, hh)
+			} else {
+				_, queueErr = handleResults(ctx, retry, results, hh)
 			}
 
-			_, err = handleResults(ctx, filepath, results, hh)
-			if err != nil {
-				return nil, fmt.Errorf("failed to handle results: %w", err)
+			if queueErr != nil {
+				return nil, errors.Join(sendErr, fmt.Errorf("failed to queue unconfirmed heartbeats: %w", queueErr))
 			}
 
-			return results, nil
+			return results, sendErr
 		}
 	}
+}
+
+func queueForRetry(filepath string, routing apikey.Config) heartbeat.Handle {
+	return func(ctx context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		// An unconfirmed destination must not replay to another destination that may have succeeded.
+		groups := make([][]heartbeat.Heartbeat, len(hh))
+		for i := range hh {
+			groups[i] = hh[i : i+1]
+		}
+
+		return nil, pushReplayableHeartbeats(ctx, filepath, routing, groups)
+	}
+}
+
+// QueueUnsent stores processed heartbeats that have not been sent to any selected destination.
+func QueueUnsent(filepath string, routing apikey.Config) heartbeat.Handle {
+	return func(ctx context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		groups, err := groupByWirePayload(hh)
+		if err != nil {
+			return nil, err
+		}
+
+		return nil, pushReplayableHeartbeats(ctx, filepath, routing, groups)
+	}
+}
+
+func groupByWirePayload(hh []heartbeat.Heartbeat) ([][]heartbeat.Heartbeat, error) {
+	groups := make([][]heartbeat.Heartbeat, 0, len(hh))
+	index := make(map[string]int, len(hh))
+
+	for _, h := range hh {
+		payload, err := json.Marshal(h)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal heartbeat for offline storage: %w", err)
+		}
+
+		key := string(payload)
+		if i, ok := index[key]; ok {
+			groups[i] = append(groups[i], h)
+		} else {
+			index[key] = len(groups)
+			groups = append(groups, []heartbeat.Heartbeat{h})
+		}
+	}
+
+	return groups, nil
+}
+
+func pushReplayableHeartbeats(
+	ctx context.Context,
+	filepath string,
+	routing apikey.Config,
+	groups [][]heartbeat.Heartbeat,
+) error {
+	var (
+		replayable []heartbeat.Heartbeat
+		rejected   int
+		routingErr error
+	)
+
+	for _, group := range groups {
+		h := group[0]
+		if routing.CanReplay(ctx, h, group[1:]...) {
+			replayable = append(replayable, h)
+		} else {
+			rejected++
+		}
+	}
+
+	if rejected > 0 {
+		routingErr = fmt.Errorf("%w for %d heartbeat(s), send with --disable-offline", ErrUnreplayableRoute, rejected)
+	}
+
+	if len(replayable) == 0 {
+		return routingErr
+	}
+
+	return errors.Join(routingErr, pushHeartbeatsWithRetry(ctx, filepath, dbBucket, replayable))
 }
 
 // QueueFilepath returns the path for offline queue db file. If
@@ -116,11 +193,11 @@ func QueueFilepath(ctx context.Context, v *viper.Viper) (string, error) {
 // WithSync initializes and returns a heartbeat handle option, which
 // can be used in a heartbeat processing pipeline to pop heartbeats
 // from offline queue and send the heartbeats to WakaTime API.
-func WithSync(filepath string, syncLimit int) heartbeat.HandleOption {
+func WithSync(filepath string, syncLimit int, routing apikey.Config) heartbeat.HandleOption {
 	return func(next heartbeat.Handle) heartbeat.Handle {
 		return func(ctx context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 			// logger.Debugf("execute offline sync with file %s", filepath)
-			err := Sync(ctx, filepath, syncLimit)(next)
+			err := Sync(ctx, filepath, syncLimit, routing)(next)
 			if err != nil {
 				return nil, fmt.Errorf("failed to sync offline heartbeats: %w", err)
 			}
@@ -131,7 +208,12 @@ func WithSync(filepath string, syncLimit int) heartbeat.HandleOption {
 }
 
 // Sync returns a function to send queued heartbeats to the WakaTime API.
-func Sync(ctx context.Context, filepath string, syncLimit int) func(next heartbeat.Handle) error {
+func Sync(
+	ctx context.Context,
+	filepath string,
+	syncLimit int,
+	routing apikey.Config,
+) func(next heartbeat.Handle) error {
 	return func(next heartbeat.Handle) error {
 		var (
 			alreadySent int
@@ -139,6 +221,7 @@ func Sync(ctx context.Context, filepath string, syncLimit int) func(next heartbe
 		)
 
 		logger := log.Extract(ctx)
+		retry := queueForRetry(filepath, routing)
 
 		for {
 			run++
@@ -167,19 +250,16 @@ func Sync(ctx context.Context, filepath string, syncLimit int) func(next heartbe
 
 			logger.Debugf("send %d heartbeats on sync run %d", len(hh), run)
 
-			results, err := next(ctx, hh)
-			if err != nil {
-				requeueErr := pushHeartbeatsWithRetry(ctx, filepath, dbBucket, hh)
-				if requeueErr != nil {
-					logger.Warnf("failed to push heartbeats to queue after api error: %s", requeueErr)
-				}
+			routed := routing.Apply(ctx, hh)
+			results, sendErr := next(ctx, routed)
 
-				return err
+			stopSending, queueErr := handleResults(ctx, retry, results, routed)
+			if queueErr != nil {
+				return errors.Join(sendErr, fmt.Errorf("failed to handle heartbeats api results: %w", queueErr))
 			}
 
-			stopSending, err := handleResults(ctx, filepath, results, hh)
-			if err != nil {
-				return fmt.Errorf("failed to handle heartbeats api results: %w", err)
+			if sendErr != nil {
+				return sendErr
 			}
 
 			if stopSending {
@@ -195,7 +275,7 @@ func Sync(ctx context.Context, filepath string, syncLimit int) func(next heartbe
 
 func handleResults(
 	ctx context.Context,
-	filepath string,
+	queue heartbeat.Handle,
 	results []heartbeat.Result,
 	hh []heartbeat.Heartbeat,
 ) (bool, error) {
@@ -205,7 +285,7 @@ func handleResults(
 	)
 
 	logger := log.Extract(ctx)
-	handled := make(map[string]int, len(results))
+	handled := make(map[resultID]int, len(results))
 
 	for n, result := range results {
 		h, ok := resultHeartbeat(result, hh, n)
@@ -215,7 +295,7 @@ func handleResults(
 			break
 		}
 
-		handled[h.ID()]++
+		handled[routedResultID(h)]++
 
 		if result.Status == http.StatusBadRequest {
 			serialized, jsonErr := json.Marshal(h)
@@ -251,8 +331,9 @@ func handleResults(
 	}
 
 	logger.Debugf("pushing %d heartbeat(s) with missing or invalid results to queue", len(toRequeue))
+	_, err := queue(ctx, toRequeue)
 
-	return true, pushHeartbeatsWithRetry(ctx, filepath, dbBucket, toRequeue)
+	return true, err
 }
 
 func resultHeartbeat(result heartbeat.Result, hh []heartbeat.Heartbeat, n int) (heartbeat.Heartbeat, bool) {
@@ -267,11 +348,21 @@ func resultHeartbeat(result heartbeat.Result, hh []heartbeat.Heartbeat, n int) (
 	return hh[n], true
 }
 
-func missingResultHeartbeats(hh []heartbeat.Heartbeat, handled map[string]int) []heartbeat.Heartbeat {
+type resultID struct {
+	id  string
+	url string
+	key string
+}
+
+func routedResultID(h heartbeat.Heartbeat) resultID {
+	return resultID{id: h.ID(), url: h.APIURL, key: h.APIKey}
+}
+
+func missingResultHeartbeats(hh []heartbeat.Heartbeat, handled map[resultID]int) []heartbeat.Heartbeat {
 	var missing []heartbeat.Heartbeat
 
 	for _, h := range hh {
-		id := h.ID()
+		id := routedResultID(h)
 		if handled[id] > 0 {
 			handled[id]--
 			continue

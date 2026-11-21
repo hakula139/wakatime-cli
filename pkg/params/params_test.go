@@ -3326,6 +3326,7 @@ func TestLoadAPIParams_APIURLs(t *testing.T) {
 
 	v := vipertools.MustNew()
 	v.Set("key", "00000000-0000-4000-8000-000000000000")
+	v.Set("project_api_key./personal/projects", "00000000-0000-4000-8000-000000000002")
 	v.Set("api_urls./work/projects", "https://work.example.com/api/v1|00000000-0000-4000-8000-000000000001")
 
 	params, err := paramspkg.LoadAPIParams(ctx, v, paramspkg.FlagReadOrderFlagPrecedence)
@@ -3339,7 +3340,17 @@ func TestLoadAPIParams_APIURLs(t *testing.T) {
 		},
 	}
 
-	assert.Equal(t, expected, params.URLPatterns)
+	assert.Equal(t, apikey.Config{
+		DefaultAPIKey: "00000000-0000-4000-8000-000000000000",
+		DefaultAPIURL: params.URL,
+		MapPatterns: []apikey.MapPattern{
+			{
+				APIKey: "00000000-0000-4000-8000-000000000002",
+				Regex:  regex.NewRegexpWrap(regexp.MustCompile("(?i)/personal/projects")),
+			},
+		},
+		URLPatterns: expected,
+	}, params.Routing())
 }
 
 func TestLoadAPIParams_APIURLs_ParseConfig(t *testing.T) {

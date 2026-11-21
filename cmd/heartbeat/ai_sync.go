@@ -2,6 +2,7 @@ package heartbeat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/wakatime/wakatime-cli/pkg/exitcode"
@@ -52,8 +53,9 @@ func RunAISyncActivity(ctx context.Context, v *viper.Viper) (int, error) {
 		heartbeats,
 		loadAISyncParams,
 	); err != nil {
-		if errwaka, ok := err.(wakaerror.Error); ok {
-			return errwaka.ExitCode(), fmt.Errorf("sending ai activity failed: %w", errwaka)
+		var errwaka wakaerror.Error
+		if errors.As(err, &errwaka) {
+			return errwaka.ExitCode(), fmt.Errorf("sending ai activity failed: %w", err)
 		}
 
 		return exitcode.ErrGeneric, fmt.Errorf("sending ai activity failed: %w", err)

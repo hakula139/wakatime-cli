@@ -59,7 +59,7 @@ func WithBackoff(config Config) heartbeat.HandleOption {
 					logger.Warnf("failed to update backoff settings: %s", updateErr)
 				}
 
-				return nil, err
+				return results, err
 			}
 
 			// success response, reset backoff

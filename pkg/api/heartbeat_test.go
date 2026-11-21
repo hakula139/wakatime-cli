@@ -97,12 +97,8 @@ func TestClient_SendHeartbeats_MultipleApiKey(t *testing.T) {
 			assert.Equal(t, []string{"Basic MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAx"}, req.Header["Authorization"])
 		}
 
-		// write response
-		f, err := os.Open("testdata/api_heartbeats_response.json")
-		require.NoError(t, err)
-
 		w.WriteHeader(http.StatusCreated)
-		_, err = io.Copy(w, f)
+		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"accepted"}},201]]}`)
 		require.NoError(t, err)
 	})
 
@@ -115,6 +111,32 @@ func TestClient_SendHeartbeats_MultipleApiKey(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, numCalls)
+}
+
+func TestClient_SendHeartbeatsPreservesResultsBeforeDestinationFailure(t *testing.T) {
+	url, router, close := setupTestServer()
+	defer close()
+
+	router.HandleFunc("/accepted/users/current/heartbeats.bulk", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"accepted"}},201]]}`)
+		require.NoError(t, err)
+	})
+	router.HandleFunc("/unauthorized/users/current/heartbeats.bulk", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+
+	heartbeats := testHeartbeats()
+	heartbeats[0].APIURL = url + "/accepted"
+	heartbeats[1].APIURL = url + "/unauthorized"
+
+	results, err := api.NewClient(url).SendHeartbeats(t.Context(), heartbeats)
+
+	var authErr api.ErrAuth
+	require.ErrorAs(t, err, &authErr)
+	require.Len(t, results, 1)
+	assert.Equal(t, heartbeats[0], results[0].Heartbeat)
+	assert.Equal(t, "accepted", results[0].ID)
 }
 
 func TestClient_SendHeartbeats_Timeout(t *testing.T) {

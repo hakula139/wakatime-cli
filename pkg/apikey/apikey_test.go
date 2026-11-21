@@ -70,6 +70,51 @@ func TestWithReplacing(t *testing.T) {
 	}, result)
 }
 
+func TestCanReplay(t *testing.T) {
+	config := apikey.Config{
+		DefaultAPIKey: "default-key",
+		DefaultAPIURL: "https://default.example",
+		MapPatterns: []apikey.MapPattern{
+			{APIKey: "project-key", Regex: regex.NewRegexpWrap(regexp.MustCompile(`/project/`))},
+		},
+		URLPatterns: []apikey.URLPattern{
+			{
+				APIURL: "https://default.example",
+				APIKey: "default-key",
+				Regex:  regex.NewRegexpWrap(regexp.MustCompile(`/deduplicated/`)),
+			},
+			{
+				APIURL: "https://other.example",
+				APIKey: "other-key",
+				Regex:  regex.NewRegexpWrap(regexp.MustCompile(`/mirrored/`)),
+			},
+		},
+	}
+
+	for _, tt := range []struct {
+		entity string
+		key    string
+		want   bool
+	}{
+		{entity: "/normal/main.go", key: "default-key", want: true},
+		{entity: "/deduplicated/main.go", key: "default-key", want: true},
+		{entity: "/project/main.go", key: "project-key", want: true},
+		{entity: "/mirrored/main.go", key: "default-key", want: false},
+		{entity: "HIDDEN.go", key: "project-key", want: false},
+	} {
+		t.Run(tt.entity, func(t *testing.T) {
+			h := heartbeat.Heartbeat{APIURL: config.DefaultAPIURL, APIKey: tt.key, Entity: tt.entity}
+			assert.Equal(t, tt.want, config.CanReplay(t.Context(), h))
+		})
+	}
+
+	primary := heartbeat.Heartbeat{APIURL: config.DefaultAPIURL, APIKey: config.DefaultAPIKey, Entity: "/mirrored/main.go"}
+	mirror := primary
+	mirror.APIURL = "https://other.example"
+	mirror.APIKey = "other-key"
+	assert.True(t, config.CanReplay(t.Context(), primary, mirror))
+}
+
 func TestApiKey_MatchPattern(t *testing.T) {
 	wd, err := os.Getwd()
 	require.NoError(t, err)

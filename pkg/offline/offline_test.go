@@ -8,14 +8,20 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/viper"
+	"github.com/wakatime/wakatime-cli/pkg/api"
+	"github.com/wakatime/wakatime-cli/pkg/apikey"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/ini"
 	"github.com/wakatime/wakatime-cli/pkg/offline"
+	"github.com/wakatime/wakatime-cli/pkg/regex"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,7 +96,7 @@ func TestWithQueue(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Len(t, hh, 2)
@@ -156,6 +162,175 @@ func TestWithQueue(t *testing.T) {
 	assert.JSONEq(t, string(dataJs), stored[0].Heartbeat)
 }
 
+func TestQueueUnsentDoesNotGroupDistinctWirePayloads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	config := apikey.Config{
+		DefaultAPIURL: "https://default.example",
+		DefaultAPIKey: "default-key",
+		URLPatterns: []apikey.URLPattern{
+			{
+				APIURL: "https://other.example",
+				APIKey: "other-key",
+				Regex:  regex.NewRegexpWrap(regexp.MustCompile(`main[.]go`)),
+			},
+		},
+	}
+	first := heartbeat.Heartbeat{APIURL: config.DefaultAPIURL, APIKey: config.DefaultAPIKey, Entity: "main.go", Time: 1}
+	second := first
+	second.APIURL = config.URLPatterns[0].APIURL
+	second.APIKey = config.URLPatterns[0].APIKey
+	second.Language = heartbeat.PointerTo("Go")
+
+	require.Equal(t, first.ID(), second.ID())
+
+	queue := offline.QueueUnsent(path, config)
+	_, err := queue(t.Context(), []heartbeat.Heartbeat{first, second})
+	require.ErrorIs(t, err, offline.ErrUnreplayableRoute)
+	assert.NoFileExists(t, path)
+
+	second.Language = nil
+
+	_, err = queue(t.Context(), []heartbeat.Heartbeat{first, second})
+	require.NoError(t, err)
+
+	stored, err := offline.ReadHeartbeats(t.Context(), path, 3)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, first.ID(), stored[0].ID())
+}
+
+func TestQueueUnsentRejectsUnserializableHeartbeat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	queue := offline.QueueUnsent(path, apikey.Config{})
+	_, err := queue(t.Context(), []heartbeat.Heartbeat{{Entity: "main.go", Time: math.NaN()}})
+	require.ErrorContains(t, err, "failed to marshal heartbeat for offline storage")
+	assert.NoFileExists(t, path)
+}
+
+func TestWithQueueRejectsMissingReceiptForUnreplayableDestination(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	config := apikey.Config{DefaultAPIURL: "https://default.example", DefaultAPIKey: "default-key"}
+	safe := heartbeat.Heartbeat{APIURL: config.DefaultAPIURL, APIKey: config.DefaultAPIKey, Entity: "main.go", Time: 1}
+	other := safe
+	other.APIURL = "https://other.example"
+
+	handle := offline.WithQueue(path, config)(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		return []heartbeat.Result{{Heartbeat: safe, Status: http.StatusTooManyRequests}}, nil
+	})
+
+	_, err := handle(t.Context(), []heartbeat.Heartbeat{other, safe})
+	require.ErrorContains(t, err, "offline queue cannot preserve API routing")
+
+	stored, err := offline.ReadHeartbeats(t.Context(), path, 2)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, safe.Entity, stored[0].Entity)
+	assert.Empty(t, stored[0].APIKey)
+	assert.Empty(t, stored[0].APIURL)
+}
+
+func TestWithQueuePreservesTransportAndRoutingErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	queue := offline.WithQueue(path, apikey.Config{DefaultAPIURL: "https://default.example"})
+	handle := queue(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		return nil, assert.AnError
+	})
+
+	h := heartbeat.Heartbeat{APIURL: "https://other.example", Entity: "main.go", Time: 1}
+	_, err := handle(t.Context(), []heartbeat.Heartbeat{h})
+	require.ErrorIs(t, err, assert.AnError)
+	assert.ErrorIs(t, err, offline.ErrUnreplayableRoute)
+	assert.NoFileExists(t, path)
+}
+
+func TestSyncRetainsOtherDestinationAfterSurplusReceipts(t *testing.T) {
+	const (
+		primaryKey = "00000000-0000-4000-8000-000000000000"
+		otherKey   = "00000000-0000-4000-8000-000000000001"
+	)
+
+	var (
+		primaryCalls atomic.Int32
+		otherCalls   atomic.Int32
+		acceptOther  atomic.Bool
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var sent []heartbeat.Heartbeat
+		if !assert.NoError(t, json.NewDecoder(req.Body).Decode(&sent)) || !assert.Len(t, sent, 1) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		var receipts []json.RawMessage
+
+		switch sent[0].Entity {
+		case "primary.go":
+			primaryCalls.Add(1)
+
+			receipts = []json.RawMessage{
+				json.RawMessage(`[{"data":{"id":"primary"}},201]`),
+				json.RawMessage(`[{"data":{"id":"extra"}},201]`),
+			}
+		case "other.go":
+			otherCalls.Add(1)
+
+			if acceptOther.Load() {
+				receipts = []json.RawMessage{json.RawMessage(`[{"data":{"id":"other"}},201]`)}
+			}
+		default:
+			t.Errorf("unexpected request entity %q", sent[0].Entity)
+			w.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string][]json.RawMessage{"responses": receipts}))
+	}))
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	config := apikey.Config{
+		DefaultAPIURL: server.URL,
+		DefaultAPIKey: primaryKey,
+		MapPatterns: []apikey.MapPattern{
+			{APIKey: otherKey, Regex: regex.NewRegexpWrap(regexp.MustCompile(`^other[.]go$`))},
+		},
+	}
+	hh := config.Apply(t.Context(), []heartbeat.Heartbeat{
+		{Entity: "primary.go", Time: 1},
+		{Entity: "other.go", Time: 2},
+	})
+	_, err := offline.QueueUnsent(path, config)(t.Context(), hh)
+	require.NoError(t, err)
+
+	sync := offline.Sync(t.Context(), path, 10, config)
+	client := api.NewClient(server.URL)
+	err = sync(client.SendHeartbeats)
+
+	var apiErr api.Err
+	require.ErrorAs(t, err, &apiErr)
+	assert.ErrorContains(t, err, "received 2 heartbeat results, request batch size 1")
+	assert.EqualValues(t, 1, primaryCalls.Load())
+	assert.Zero(t, otherCalls.Load())
+
+	stored, err := offline.ReadHeartbeats(t.Context(), path, 10)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "other.go", stored[0].Entity)
+
+	acceptOther.Store(true)
+
+	require.NoError(t, sync(client.SendHeartbeats))
+	assert.EqualValues(t, 1, primaryCalls.Load())
+	assert.EqualValues(t, 1, otherCalls.Load())
+
+	count, err := offline.CountHeartbeats(t.Context(), path)
+	require.NoError(t, err)
+	assert.Zero(t, count)
+}
+
 func TestWithQueue_NoHeartbeats(t *testing.T) {
 	// setup
 	f, err := os.CreateTemp(t.TempDir(), "")
@@ -163,7 +338,7 @@ func TestWithQueue_NoHeartbeats(t *testing.T) {
 
 	defer f.Close()
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Len(t, hh, 0)
@@ -186,7 +361,7 @@ func TestWithQueue_ApiError(t *testing.T) {
 
 	defer f.Close()
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Equal(t, hh, []heartbeat.Heartbeat{
@@ -249,7 +424,7 @@ func TestWithQueue_InvalidResults(t *testing.T) {
 
 	defer f.Close()
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Equal(t, hh, testHeartbeats())
@@ -335,7 +510,7 @@ func TestWithQueue_HandleLeftovers(t *testing.T) {
 
 	defer f.Close()
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Equal(t, hh, testHeartbeats())
@@ -403,7 +578,8 @@ func TestWithQueue_BadRequestDoesNotRequeue(t *testing.T) {
 
 	defer f.Close()
 
-	handle := offline.WithQueue(f.Name())(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+	queue := offline.WithQueue(f.Name(), apikey.Config{})
+	handle := queue(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		require.Len(t, hh, 1)
 
 		return []heartbeat.Result{{
@@ -451,7 +627,7 @@ func TestWithSync(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	opt := offline.WithSync(f.Name(), offline.SyncMaxDefault)
+	opt := offline.WithSync(f.Name(), offline.SyncMaxDefault, apikey.Config{})
 
 	handle := opt(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		return []heartbeat.Result{
@@ -500,7 +676,8 @@ func TestWithSync(t *testing.T) {
 }
 
 func TestWithSync_OpenError(t *testing.T) {
-	handle := offline.WithSync(t.TempDir(), 1)(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+	sync := offline.WithSync(t.TempDir(), 1, apikey.Config{})
+	handle := sync(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		t.Fatal("next handler should not be called")
 
 		return nil, nil
@@ -530,7 +707,7 @@ func TestSync_RequeuesOnHandlerError(t *testing.T) {
 	}})
 	require.NoError(t, db.Close())
 
-	err = offline.Sync(t.Context(), f.Name(), 1)(
+	err = offline.Sync(t.Context(), f.Name(), 1, apikey.Config{})(
 		func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 			require.Len(t, hh, 1)
 
@@ -576,7 +753,7 @@ func TestSync_MultipleRequests(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 1000)
+	syncFn := offline.Sync(t.Context(), f.Name(), 1000, apikey.Config{})
 
 	var numCalls int
 
@@ -663,7 +840,7 @@ func TestSync_APIError(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 3)
+	syncFn := offline.Sync(t.Context(), f.Name(), 3, apikey.Config{})
 
 	var numCalls int
 
@@ -751,7 +928,7 @@ func TestSync_APIErrorBulkNested(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 3)
+	syncFn := offline.Sync(t.Context(), f.Name(), 3, apikey.Config{})
 
 	var numCalls int
 
@@ -850,7 +1027,7 @@ func TestSync_StopsOnInvalidResults(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 1000)
+	syncFn := offline.Sync(t.Context(), f.Name(), 1000, apikey.Config{})
 
 	var numCalls int
 
@@ -945,7 +1122,7 @@ func TestSync_SyncLimit(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 1)
+	syncFn := offline.Sync(t.Context(), f.Name(), 1, apikey.Config{})
 
 	var numCalls int
 
@@ -1022,7 +1199,7 @@ func TestSync_SyncLimitAcrossMultipleBatches(t *testing.T) {
 
 	require.NoError(t, db.Close())
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 30)
+	syncFn := offline.Sync(t.Context(), f.Name(), 30, apikey.Config{})
 
 	var (
 		numCalls int
@@ -1105,7 +1282,7 @@ func TestSync_SyncUnlimited(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), math.MaxInt32)
+	syncFn := offline.Sync(t.Context(), f.Name(), math.MaxInt32, apikey.Config{})
 
 	var numCalls int
 
@@ -1207,7 +1384,7 @@ func TestSync_DeletesDuplicates(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 5)
+	syncFn := offline.Sync(t.Context(), f.Name(), 5, apikey.Config{})
 
 	var (
 		numCalls  int
@@ -1289,7 +1466,7 @@ func TestSync_StopsOnMissingResults(t *testing.T) {
 
 			var requests int
 
-			err = offline.Sync(t.Context(), queuePath, 100)(func(
+			err = offline.Sync(t.Context(), queuePath, 100, apikey.Config{})(func(
 				_ context.Context,
 				batch []heartbeat.Heartbeat,
 			) ([]heartbeat.Result, error) {
@@ -1433,7 +1610,8 @@ func TestWithQueue_CorruptDBResetsAndSavesHeartbeats(t *testing.T) {
 		UserAgent:  "wakatime/test",
 	}
 
-	handle := offline.WithQueue(queuePath)(func(context.Context, []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+	queue := offline.WithQueue(queuePath, apikey.Config{})
+	handle := queue(func(context.Context, []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		return nil, errors.New("api unavailable")
 	})
 

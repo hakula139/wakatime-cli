@@ -423,6 +423,20 @@ func TestSendHeartbeats_MultipleAPIURLs_ExtraHeartbeats(t *testing.T) {
 
 	var defaultAPICalls, customAPICalls int
 
+	writeReceipts := func(w http.ResponseWriter, req *http.Request, wantCount int) {
+		var sent []json.RawMessage
+		require.NoError(t, json.NewDecoder(req.Body).Decode(&sent))
+		require.Len(t, sent, wantCount)
+
+		responses := make([]json.RawMessage, len(sent))
+		for i := range responses {
+			responses[i] = json.RawMessage(`[{"data":{"id":"example"}},201]`)
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string][]json.RawMessage{"responses": responses}))
+	}
+
 	// Handler for default API
 	defaultRouter.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
 		defaultAPICalls++
@@ -430,13 +444,7 @@ func TestSendHeartbeats_MultipleAPIURLs_ExtraHeartbeats(t *testing.T) {
 		// should use default API key
 		assert.Equal(t, []string{"Basic MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw"}, req.Header["Authorization"])
 
-		// write response
-		f, err := os.Open("testdata/api_heartbeats_response.json")
-		require.NoError(t, err)
-
-		w.WriteHeader(http.StatusCreated)
-		_, err = io.Copy(w, f)
-		require.NoError(t, err)
+		writeReceipts(w, req, 3)
 	})
 
 	// Handler for custom API
@@ -446,13 +454,7 @@ func TestSendHeartbeats_MultipleAPIURLs_ExtraHeartbeats(t *testing.T) {
 		// should use custom API key
 		assert.Equal(t, []string{"Basic MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAx"}, req.Header["Authorization"])
 
-		// write response
-		f, err := os.Open("testdata/api_heartbeats_response.json")
-		require.NoError(t, err)
-
-		w.WriteHeader(http.StatusCreated)
-		_, err = io.Copy(w, f)
-		require.NoError(t, err)
+		writeReceipts(w, req, 1)
 	})
 
 	tmpDir := t.TempDir()

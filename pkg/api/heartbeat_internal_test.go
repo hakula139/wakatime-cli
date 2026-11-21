@@ -104,7 +104,7 @@ func TestClientSendHeartbeatsInternalBranches(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed parsing results")
 	})
 
-	t.Run("extra results are not assigned heartbeats", func(t *testing.T) {
+	t.Run("surplus results return protocol error with valid receipts", func(t *testing.T) {
 		c := NewClient(BaseURL)
 		c.doFunc = func(*Client, *http.Request) (*http.Response, error) {
 			return &http.Response{
@@ -118,10 +118,12 @@ func TestClientSendHeartbeatsInternalBranches(t *testing.T) {
 
 		input := heartbeat.Heartbeat{APIKey: "key", Entity: "main.go"}
 		results, err := c.SendHeartbeats(context.Background(), []heartbeat.Heartbeat{input})
-		require.NoError(t, err)
-		require.Len(t, results, 2)
+
+		var apiErr Err
+		require.ErrorAs(t, err, &apiErr)
+		require.Len(t, results, 1)
 		assert.Equal(t, input, results[0].Heartbeat)
-		assert.Empty(t, results[1].Heartbeat)
+		assert.Equal(t, "first", results[0].ID)
 	})
 }
 
