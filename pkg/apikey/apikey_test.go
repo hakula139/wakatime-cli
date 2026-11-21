@@ -107,6 +107,12 @@ func TestCanReplay(t *testing.T) {
 			assert.Equal(t, tt.want, config.CanReplay(t.Context(), h))
 		})
 	}
+
+	primary := heartbeat.Heartbeat{APIURL: config.DefaultAPIURL, APIKey: config.DefaultAPIKey, Entity: "/mirrored/main.go"}
+	mirror := primary
+	mirror.APIURL = "https://other.example"
+	mirror.APIKey = "other-key"
+	assert.True(t, config.CanReplay(t.Context(), primary, mirror))
 }
 
 func TestApiKey_MatchPattern(t *testing.T) {

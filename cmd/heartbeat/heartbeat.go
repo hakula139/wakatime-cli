@@ -52,18 +52,6 @@ func Run(ctx context.Context, v *viper.Viper) (int, error) {
 
 	err = SendHeartbeats(ctx, v, params, queueFilepath, heartbeats)
 	if err != nil {
-		var errauth api.ErrAuth
-
-		// api.ErrAuth represents an error when parsing api key or timeout.
-		// Save heartbeats to offline db when api.ErrAuth as it avoids losing heartbeats.
-		if errors.As(err, &errauth) {
-			if err := offlinecmd.SaveHeartbeats(ctx, v, queueFilepath, renderUserAgents(ctx, heartbeats)); err != nil {
-				logger.Errorf("failed to save heartbeats to offline queue: %s", err)
-			}
-
-			return errauth.ExitCode(), fmt.Errorf("sending heartbeat(s) failed: %w", err)
-		}
-
 		var errwaka wakaerror.Error
 		if errors.As(err, &errwaka) {
 			return errwaka.ExitCode(), fmt.Errorf("sending heartbeat(s) failed: %w", err)

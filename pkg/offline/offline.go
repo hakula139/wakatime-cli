@@ -58,7 +58,15 @@ var ErrUnreplayableRoute = errors.New("offline queue cannot preserve API routing
 // failing connection to API, failed sending or errors returned by API, the
 // replayable heartbeats are stored in a DB for retry on the next sync.
 func WithQueue(filepath string, routing apikey.Config) heartbeat.HandleOption {
-	queue := ReplayQueue(filepath, routing)
+	queue := func(ctx context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		// A failed destination must not replay to another destination that may have succeeded.
+		groups := make([][]heartbeat.Heartbeat, len(hh))
+		for i := range hh {
+			groups[i] = hh[i : i+1]
+		}
+
+		return nil, pushReplayableHeartbeats(ctx, filepath, routing, groups)
+	}
 
 	return func(next heartbeat.Handle) heartbeat.Handle {
 		return func(ctx context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
@@ -93,34 +101,70 @@ func WithQueue(filepath string, routing apikey.Config) heartbeat.HandleOption {
 	}
 }
 
-// ReplayQueue stores processed heartbeats whose original API destinations can be recovered during sync.
-func ReplayQueue(filepath string, routing apikey.Config) heartbeat.Handle {
+// QueueUnsent stores processed heartbeats that have not been sent to any selected destination.
+func QueueUnsent(filepath string, routing apikey.Config) heartbeat.Handle {
 	return func(ctx context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-		var (
-			replayable []heartbeat.Heartbeat
-			routingErr error
-		)
-
-		for _, h := range hh {
-			if routing.CanReplay(ctx, h) {
-				replayable = append(replayable, h)
-			}
+		groups, err := groupByWirePayload(hh)
+		if err != nil {
+			return nil, err
 		}
 
-		if rejected := len(hh) - len(replayable); rejected > 0 {
-			routingErr = fmt.Errorf(
-				"%w for %d heartbeat(s), send with --disable-offline",
-				ErrUnreplayableRoute,
-				rejected,
-			)
-		}
-
-		if len(replayable) == 0 {
-			return nil, routingErr
-		}
-
-		return nil, errors.Join(routingErr, pushHeartbeatsWithRetry(ctx, filepath, dbBucket, replayable))
+		return nil, pushReplayableHeartbeats(ctx, filepath, routing, groups)
 	}
+}
+
+func groupByWirePayload(hh []heartbeat.Heartbeat) ([][]heartbeat.Heartbeat, error) {
+	groups := make([][]heartbeat.Heartbeat, 0, len(hh))
+	index := make(map[string]int, len(hh))
+
+	for _, h := range hh {
+		payload, err := json.Marshal(h)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal heartbeat for offline storage: %w", err)
+		}
+
+		key := string(payload)
+		if i, ok := index[key]; ok {
+			groups[i] = append(groups[i], h)
+		} else {
+			index[key] = len(groups)
+			groups = append(groups, []heartbeat.Heartbeat{h})
+		}
+	}
+
+	return groups, nil
+}
+
+func pushReplayableHeartbeats(
+	ctx context.Context,
+	filepath string,
+	routing apikey.Config,
+	groups [][]heartbeat.Heartbeat,
+) error {
+	var (
+		replayable []heartbeat.Heartbeat
+		rejected   int
+		routingErr error
+	)
+
+	for _, group := range groups {
+		h := group[0]
+		if routing.CanReplay(ctx, h, group[1:]...) {
+			replayable = append(replayable, h)
+		} else {
+			rejected++
+		}
+	}
+
+	if rejected > 0 {
+		routingErr = fmt.Errorf("%w for %d heartbeat(s), send with --disable-offline", ErrUnreplayableRoute, rejected)
+	}
+
+	if len(replayable) == 0 {
+		return routingErr
+	}
+
+	return errors.Join(routingErr, pushHeartbeatsWithRetry(ctx, filepath, dbBucket, replayable))
 }
 
 // QueueFilepath returns the path for offline queue db file. If

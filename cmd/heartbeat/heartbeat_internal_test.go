@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wakatime/wakatime-cli/cmd/offlinesync"
 	"github.com/wakatime/wakatime-cli/pkg/api"
+	"github.com/wakatime/wakatime-cli/pkg/exitcode"
 	heartbeatpkg "github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	offlinepkg "github.com/wakatime/wakatime-cli/pkg/offline"
 	paramspkg "github.com/wakatime/wakatime-cli/pkg/params"
@@ -283,6 +284,15 @@ func TestValidateDirectResultsRejectsUnassociatedReceipt(t *testing.T) {
 	assert.ErrorContains(t, err, "received a result without a matching heartbeat")
 }
 
+func TestValidateDirectResultsPreservesTransportError(t *testing.T) {
+	handle := validateDirectResults(func(_ context.Context, _ []heartbeatpkg.Heartbeat) ([]heartbeatpkg.Result, error) {
+		return nil, assert.AnError
+	})
+
+	_, err := handle(t.Context(), []heartbeatpkg.Heartbeat{internalAppHeartbeat()})
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
 func TestSendPreparedHeartbeatsReportsOverflowSaveFailure(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -450,6 +460,103 @@ func TestSendPreparedHeartbeatsDoesNotQueueUnreplayableProjectRoutes(t *testing.
 
 		require.NoError(t, offlinesync.SyncOfflineActivity(t.Context(), v, queueFile))
 		assert.EqualValues(t, offlinepkg.SendLimit+2, defaultCount.Load())
+	})
+}
+
+func TestOfflineHeartbeatMirrorRouting(t *testing.T) {
+	const (
+		primaryKey = "00000000-0000-4000-8000-000000000000"
+		mirrorKey  = "00000000-0000-4000-8000-000000000001"
+	)
+
+	h := internalProjectHeartbeat(t, []byte("[projectmap]\nmain[.]go = mirrored\n"))
+	entity := filepath.ToSlash(h.Entity)
+	receiver := func(key string, received, status *atomic.Int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "Basic "+base64.StdEncoding.EncodeToString([]byte(key)), r.Header.Get("Authorization"))
+
+			var sent []heartbeatpkg.Heartbeat
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&sent)) || !assert.Len(t, sent, 1) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			assert.Equal(t, entity, sent[0].Entity)
+			assert.Equal(t, h.Time, sent[0].Time)
+			assert.Equal(t, heartbeatpkg.PointerTo("mirrored"), sent[0].Project)
+			received.Add(1)
+
+			if status.Load() == http.StatusUnauthorized {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
+			writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
+		}))
+	}
+
+	var primary, mirror, primaryStatus, mirrorStatus atomic.Int32
+
+	primaryAPI := receiver(primaryKey, &primary, &primaryStatus)
+	defer primaryAPI.Close()
+
+	mirrorAPI := receiver(mirrorKey, &mirror, &mirrorStatus)
+	defer mirrorAPI.Close()
+
+	queueFile := filepath.Join(t.TempDir(), "offline.bdb")
+	v := viper.New()
+	v.Set("internal-config", filepath.Join(t.TempDir(), "internal.cfg"))
+	v.Set("settings.api_url", primaryAPI.URL)
+	v.Set("settings.api_key", primaryKey)
+	v.Set("api_urls.main", mirrorAPI.URL+"|"+mirrorKey)
+
+	loaded, err := loadAISyncParams(t.Context(), v, paramspkg.FlagReadOrderFlagPrecedence)
+	require.NoError(t, err)
+
+	loaded.Offline.LastSentAt = time.Now()
+	loaded.Offline.RateLimit = time.Hour
+
+	err = sendPreparedHeartbeats(t.Context(), v, loaded, queueFile, []heartbeatpkg.Heartbeat{h}, loadAISyncParams)
+	require.NoError(t, err)
+
+	assert.Zero(t, primary.Load())
+	assert.Zero(t, mirror.Load())
+
+	stored, err := offlinepkg.ReadHeartbeats(t.Context(), queueFile, 10)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Empty(t, stored[0].APIURL)
+	assert.Empty(t, stored[0].APIKey)
+
+	require.NoError(t, offlinesync.SyncOfflineActivity(t.Context(), v, queueFile))
+	assert.EqualValues(t, 1, primary.Load())
+	assert.EqualValues(t, 1, mirror.Load())
+
+	t.Run("authentication failure after confirmed sibling", func(t *testing.T) {
+		if primaryAPI.URL < mirrorAPI.URL {
+			mirrorStatus.Store(http.StatusUnauthorized)
+		} else {
+			primaryStatus.Store(http.StatusUnauthorized)
+		}
+
+		v.Set("entity", h.Entity)
+		v.Set("entity-type", "file")
+		v.Set("time", h.Time)
+		v.Set("sync-ai-disabled", true)
+		v.Set("offline-queue-file", queueFile)
+
+		code, err := Run(t.Context(), v)
+		require.ErrorIs(t, err, offlinepkg.ErrUnreplayableRoute)
+
+		var authErr api.ErrAuth
+		assert.ErrorAs(t, err, &authErr)
+		assert.Equal(t, exitcode.ErrAuth, code)
+		assert.EqualValues(t, 2, primary.Load())
+		assert.EqualValues(t, 2, mirror.Load())
+
+		count, err := offlinepkg.CountHeartbeats(t.Context(), queueFile)
+		require.NoError(t, err)
+		assert.Zero(t, count)
 	})
 }
 

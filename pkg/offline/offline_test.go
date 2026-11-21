@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -17,6 +18,7 @@ import (
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/ini"
 	"github.com/wakatime/wakatime-cli/pkg/offline"
+	"github.com/wakatime/wakatime-cli/pkg/regex"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -157,6 +159,51 @@ func TestWithQueue(t *testing.T) {
 	assert.JSONEq(t, string(dataJs), stored[0].Heartbeat)
 }
 
+func TestQueueUnsentDoesNotGroupDistinctWirePayloads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	config := apikey.Config{
+		DefaultAPIURL: "https://default.example",
+		DefaultAPIKey: "default-key",
+		URLPatterns: []apikey.URLPattern{
+			{
+				APIURL: "https://other.example",
+				APIKey: "other-key",
+				Regex:  regex.NewRegexpWrap(regexp.MustCompile(`main[.]go`)),
+			},
+		},
+	}
+	first := heartbeat.Heartbeat{APIURL: config.DefaultAPIURL, APIKey: config.DefaultAPIKey, Entity: "main.go", Time: 1}
+	second := first
+	second.APIURL = config.URLPatterns[0].APIURL
+	second.APIKey = config.URLPatterns[0].APIKey
+	second.Language = heartbeat.PointerTo("Go")
+
+	require.Equal(t, first.ID(), second.ID())
+
+	queue := offline.QueueUnsent(path, config)
+	_, err := queue(t.Context(), []heartbeat.Heartbeat{first, second})
+	require.ErrorIs(t, err, offline.ErrUnreplayableRoute)
+	assert.NoFileExists(t, path)
+
+	second.Language = nil
+
+	_, err = queue(t.Context(), []heartbeat.Heartbeat{first, second})
+	require.NoError(t, err)
+
+	stored, err := offline.ReadHeartbeats(t.Context(), path, 3)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, first.ID(), stored[0].ID())
+}
+
+func TestQueueUnsentRejectsUnserializableHeartbeat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	queue := offline.QueueUnsent(path, apikey.Config{})
+	_, err := queue(t.Context(), []heartbeat.Heartbeat{{Entity: "main.go", Time: math.NaN()}})
+	require.ErrorContains(t, err, "failed to marshal heartbeat for offline storage")
+	assert.NoFileExists(t, path)
+}
+
 func TestWithQueueRejectsMissingReceiptForUnreplayableDestination(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "offline.bdb")
 	config := apikey.Config{DefaultAPIURL: "https://default.example", DefaultAPIKey: "default-key"}
@@ -177,6 +224,20 @@ func TestWithQueueRejectsMissingReceiptForUnreplayableDestination(t *testing.T) 
 	assert.Equal(t, safe.Entity, stored[0].Entity)
 	assert.Empty(t, stored[0].APIKey)
 	assert.Empty(t, stored[0].APIURL)
+}
+
+func TestWithQueuePreservesTransportAndRoutingErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	queue := offline.WithQueue(path, apikey.Config{DefaultAPIURL: "https://default.example"})
+	handle := queue(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		return nil, assert.AnError
+	})
+
+	h := heartbeat.Heartbeat{APIURL: "https://other.example", Entity: "main.go", Time: 1}
+	_, err := handle(t.Context(), []heartbeat.Heartbeat{h})
+	require.ErrorIs(t, err, assert.AnError)
+	assert.ErrorIs(t, err, offline.ErrUnreplayableRoute)
+	assert.NoFileExists(t, path)
 }
 
 func TestWithQueue_NoHeartbeats(t *testing.T) {

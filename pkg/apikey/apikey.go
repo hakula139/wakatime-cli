@@ -2,6 +2,7 @@ package apikey
 
 import (
 	"context"
+	"maps"
 
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/log"
@@ -74,12 +75,15 @@ func WithReplacing(config Config) heartbeat.HandleOption {
 	}
 }
 
-// CanReplay reports whether a queued heartbeat would go to its original API destination.
-func (config Config) CanReplay(ctx context.Context, h heartbeat.Heartbeat) bool {
-	destinations := config.destinations(ctx, h.Entity)
-	_, found := destinations[destination{url: h.APIURL, key: h.APIKey}]
+// CanReplay reports whether one stored heartbeat would recover exactly the selected destinations.
+// Additional heartbeats must be routing copies of the same wire payload.
+func (config Config) CanReplay(ctx context.Context, h heartbeat.Heartbeat, copies ...heartbeat.Heartbeat) bool {
+	selected := map[destination]struct{}{{url: h.APIURL, key: h.APIKey}: {}}
+	for _, copy := range copies {
+		selected[destination{url: copy.APIURL, key: copy.APIKey}] = struct{}{}
+	}
 
-	return found && len(destinations) == 1
+	return maps.Equal(config.destinations(ctx, h.Entity), selected)
 }
 
 func (config Config) destinations(ctx context.Context, entity string) map[destination]struct{} {

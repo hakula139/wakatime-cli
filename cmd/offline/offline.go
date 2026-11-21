@@ -16,8 +16,7 @@ import (
 )
 
 // SaveHeartbeats saves heartbeats to the offline db without trying to send to the API.
-// Used when we have more heartbeats than `offline.SendLimit`, when we couldn't send
-// heartbeats to the API, or the API returned an auth error.
+// Used for raw heartbeats when configuration or API parameters could not be loaded.
 func SaveHeartbeats(
 	ctx context.Context,
 	v *viper.Viper,
@@ -64,7 +63,7 @@ func saveHeartbeats(
 	}
 
 	handleOpts := initHandleOptions()
-	store := offline.ReplayQueue(queueFilepath, loaded.API.Routing())
+	store := offline.QueueUnsent(queueFilepath, loaded.API.Routing())
 	sender := filter.WithLengthValidator()(offline.WithAIBuffering(queueFilepath)(store))
 	handle := handler.New(v, handler.Config{
 		Params: loaded,
