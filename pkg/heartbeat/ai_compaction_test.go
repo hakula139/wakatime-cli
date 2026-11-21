@@ -66,13 +66,62 @@ func TestCompactAIHeartbeatsPreservesMetricsAndActivityBoundaries(t *testing.T) 
 	assert.Equal(t, string(before), string(after))
 }
 
+func TestCompactAIHeartbeatsPreservesProjectSwitches(t *testing.T) {
+	tests := map[string]func(*heartbeat.Heartbeat){
+		"ai activity": func(*heartbeat.Heartbeat) {},
+		"prompt":      func(h *heartbeat.Heartbeat) { h.AIPromptLength = 7 },
+		"human": func(h *heartbeat.Heartbeat) {
+			h.Category = heartbeat.CodingCategory.String()
+			h.AISession = ""
+		},
+	}
+
+	for name, change := range tests {
+		t.Run(name, func(t *testing.T) {
+			first := compactionHeartbeat(601, 3)
+			switchProject := compactionHeartbeat(630, 0)
+			switchProject.Project = heartbeat.PointerTo("other-app")
+			switchProject.Entity = "/home/u/src/other-app/main.go"
+			switchProject.AISession = "session-b"
+			change(&switchProject)
+
+			resume := compactionHeartbeat(640, 5)
+			middle := compactionHeartbeat(660, 7)
+			last := compactionHeartbeat(670, 11)
+			input := []heartbeat.Heartbeat{last, first, middle, switchProject, resume}
+
+			got := heartbeat.CompactAIHeartbeats(input)
+
+			resume.AIInputTokens = 0
+			last.AIInputTokens = 23
+			assert.Equal(t, []heartbeat.Heartbeat{first, switchProject, resume, last}, got)
+		})
+	}
+}
+
+func TestCompactAIHeartbeatsTreatsUnsetProjectsAsOneRun(t *testing.T) {
+	first := compactionHeartbeat(601, 3)
+	first.Project = nil
+	middle := compactionHeartbeat(602, 5)
+	middle.Project = nil
+	explicitEmpty := compactionHeartbeat(603, 7)
+	explicitEmpty.Project = heartbeat.PointerTo("")
+	last := compactionHeartbeat(604, 11)
+	last.Project = nil
+
+	got := heartbeat.CompactAIHeartbeats([]heartbeat.Heartbeat{first, middle, explicitEmpty, last})
+
+	first.AIInputTokens = 0
+	last.AIInputTokens = 19
+	assert.Equal(t, []heartbeat.Heartbeat{first, explicitEmpty, last}, got)
+}
+
 func TestCompactAIHeartbeatsSeparatesWireIdentity(t *testing.T) {
 	tests := map[string]func(*heartbeat.Heartbeat){
 		"session":             func(h *heartbeat.Heartbeat) { h.AISession = "session-b" },
 		"model":               func(h *heartbeat.Heartbeat) { h.UserAgent = "model-b/1 plugin/1" },
 		"full user agent":     func(h *heartbeat.Heartbeat) { h.UserAgent = "model-a/1 plugin/2" },
 		"subscription":        func(h *heartbeat.Heartbeat) { h.AISubscriptionPlan = "team" },
-		"project":             func(h *heartbeat.Heartbeat) { h.Project = heartbeat.PointerTo("other-app") },
 		"branch":              func(h *heartbeat.Heartbeat) { h.Branch = heartbeat.PointerTo("feature") },
 		"entity":              func(h *heartbeat.Heartbeat) { h.Entity = "/home/u/src/app/lib.go" },
 		"write":               func(h *heartbeat.Heartbeat) { h.IsWrite = heartbeat.PointerTo(true) },

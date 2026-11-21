@@ -12,8 +12,9 @@ import (
 const AIBufferDuration = 5 * time.Minute
 
 // CompactAIHeartbeats preserves prompt events and combines zero-prompt AI activity
-// with matching wire metadata within fixed UTC windows. It retains both activity
-// endpoints and places each group's metric totals on its last heartbeat.
+// with matching wire metadata within fixed UTC windows and uninterrupted runs of
+// the same project. It retains both activity endpoints and places each group's
+// metric totals on its last heartbeat.
 func CompactAIHeartbeats(heartbeats []Heartbeat) []Heartbeat {
 	ordered := append([]Heartbeat(nil), heartbeats...)
 	sort.SliceStable(ordered, func(i, j int) bool {
@@ -33,23 +34,33 @@ func CompactAIHeartbeats(heartbeats []Heartbeat) []Heartbeat {
 	groups := make(map[groupKey]*heartbeatGroup)
 	seen := make(map[string]struct{})
 	retained := make([]bool, len(ordered))
+	var previousProject string
 
 	for i, h := range ordered {
 		retained[i] = true
 
-		if h.Category != aiCodingCategoryString || h.AISession == "" || h.SkipAIBuffering {
-			continue
+		bufferedAI := h.Category == aiCodingCategoryString && h.AISession != "" && !h.SkipAIBuffering
+		if bufferedAI {
+			id := h.ID()
+			if _, ok := seen[id]; ok {
+				retained[i] = false
+				continue
+			}
+
+			seen[id] = struct{}{}
 		}
 
-		id := h.ID()
-		if _, ok := seen[id]; ok {
-			retained[i] = false
-			continue
+		var project string
+		if h.Project != nil {
+			project = *h.Project
 		}
 
-		seen[id] = struct{}{}
+		if project != previousProject {
+			clear(groups)
+			previousProject = project
+		}
 
-		if h.AIPromptLength != 0 {
+		if !bufferedAI || h.AIPromptLength != 0 {
 			continue
 		}
 
