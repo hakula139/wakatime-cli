@@ -57,7 +57,7 @@ buildGo127Module (finalAttrs: {
 
   meta = {
     description = "Command line interface to WakaTime";
-    homepage = "https://github.com/hakula139/wakatime-cli";
+    homepage = "https://github.com/hakulab/wakatime-cli";
     license = lib.licenses.bsd3;
     mainProgram = "wakatime-cli";
     platforms = lib.platforms.linux ++ lib.platforms.darwin;
