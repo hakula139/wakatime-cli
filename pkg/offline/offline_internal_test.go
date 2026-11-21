@@ -133,12 +133,14 @@ func TestQueuePreservesAIEventsDuringDeduplication(t *testing.T) {
 		func(h *heartbeat.Heartbeat) { h.HumanLineChanges = heartbeat.PointerTo(23) },
 		func(h *heartbeat.Heartbeat) { h.Time = 10.5 },
 	}
+
 	expected := []heartbeat.Heartbeat{base}
 	for _, change := range changes {
 		h := base
 		change(&h)
 		expected = append(expected, h)
 	}
+
 	human := heartbeat.Heartbeat{
 		Category:   heartbeat.CodingCategory.String(),
 		Entity:     base.Entity,
@@ -165,6 +167,7 @@ func TestQueuePreservesAIEventsDuringDeduplication(t *testing.T) {
 		deleted, err := queue.DeleteDuplicates()
 		require.NoError(t, err)
 		assert.Equal(t, 1, deleted)
+
 		got, err = queue.ReadMany(100)
 		require.NoError(t, err)
 

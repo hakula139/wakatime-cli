@@ -36,16 +36,21 @@ func TestAntigravitySQLiteModifiedAfter(t *testing.T) {
 					t.Run(tc.name, func(t *testing.T) {
 						home := updateTestHome(t)
 						path := filepath.Join(home, ".gemini", product.appDir, directory, "one.db")
+
 						db := updateDB(t, path)
 						if tc.wal {
 							updateSQL(t, db, `PRAGMA journal_mode = WAL`)
 						}
+
 						updateSQL(t, db, `CREATE TABLE gen_metadata(idx INTEGER, data BLOB)`)
 						updateSQL(t, db, `INSERT INTO gen_metadata VALUES(1, ?)`, strings.Repeat("x", 2048))
+
 						if !tc.wal {
 							require.NoError(t, db.Close())
 						}
+
 						require.NoError(t, os.Chtimes(path, tc.modified, tc.modified))
+
 						if tc.wal {
 							recent := cutoff.Add(time.Hour)
 							require.NoError(t, os.Chtimes(path+"-wal", recent, recent))
@@ -54,6 +59,7 @@ func TestAntigravitySQLiteModifiedAfter(t *testing.T) {
 						// Leave only 1 KiB to prove historical payloads never consume the shared budget.
 						budget := &aiSQLiteBudget{bytes: aiSQLiteByteLimit - 1024}
 						ctx := context.WithValue(t.Context(), aiSQLiteBudgetKey{}, budget)
+
 						_, err := (Gemini{After: tc.after}).antigravitySQLite(ctx, home)
 						if tc.wantRead {
 							require.ErrorContains(t, err, "sqlite parsing exceeded byte budget")

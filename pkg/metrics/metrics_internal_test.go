@@ -48,6 +48,7 @@ func TestStartProfilingMemFileError(t *testing.T) {
 			cpuFile, err := os.CreateTemp(t.TempDir(), "cpu")
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = cpuFile.Close() })
+
 			var calls, stops int
 
 			stop, err := startProfiling(t.Context(), defaultTestProfilingDeps(t, profilingDeps{
@@ -74,6 +75,7 @@ func TestStartProfilingMemFileError(t *testing.T) {
 
 			_, writeErr := cpuFile.Write([]byte("closed"))
 			assert.ErrorIs(t, writeErr, os.ErrClosed)
+
 			if cpuBusy {
 				assert.Zero(t, stops)
 			} else {

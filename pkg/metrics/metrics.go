@@ -59,6 +59,7 @@ func startProfiling(ctx context.Context, deps profilingDeps) (func(), error) {
 	logger := log.Extract(ctx)
 
 	err = deps.startCPUProfile(cpuf)
+
 	cpuStarted := err == nil
 	if err != nil {
 		logger.Errorf("failed to start cpu profile: %s", err)
