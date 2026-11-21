@@ -68,6 +68,7 @@ func TestHideProjectFolder(t *testing.T) {
 			}, true)
 
 			assert.Equal(t, test.Expected, h.Entity)
+
 			if test.RootCountRemoved {
 				assert.Nil(t, h.ProjectRootCount)
 			} else {

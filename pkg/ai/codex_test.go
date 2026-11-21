@@ -405,6 +405,7 @@ func TestCodexParse_ProjectForUserMessageBeforeContext(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, got, 4)
+
 	for i, cwd := range []string{"/workspace/worktree", "/workspace/worktree", "/workspace/worktree", "/workspace/next"} {
 		assert.Equal(t, cwd, got[i].ProjectPathOverride)
 	}
@@ -1122,6 +1123,7 @@ func TestCodexParse_PatchProjectFallsBackToTurnContextCwd(t *testing.T) {
 	root := t.TempDir()
 	worktree := filepath.Join(root, "active")
 	other := filepath.Join(root, "other")
+
 	for _, dir := range []string{worktree, other} {
 		git := filepath.Join(dir, ".git")
 		require.NoError(t, os.MkdirAll(git, 0o755))
@@ -1131,6 +1133,7 @@ func TestCodexParse_PatchProjectFallsBackToTurnContextCwd(t *testing.T) {
 
 	notePath := filepath.Join(root, "notes", "plan.md")
 	otherPath := filepath.Join(other, "demo.txt")
+
 	require.NoError(t, os.Mkdir(filepath.Dir(notePath), 0o755))
 	require.NoError(t, os.WriteFile(notePath, []byte("plan"), 0o644))
 	require.NoError(t, os.WriteFile(otherPath, []byte("hello"), 0o644))
@@ -1159,6 +1162,7 @@ func TestCodexParse_PatchProjectFallsBackToTurnContextCwd(t *testing.T) {
 
 	assert.Equal(t, notePath, got[0].Entity)
 	assert.Equal(t, otherPath, got[1].Entity)
+
 	for _, h := range got {
 		assert.Equal(t, worktree, h.ProjectPathOverride)
 	}
