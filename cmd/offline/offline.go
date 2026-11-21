@@ -15,8 +15,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-var errSkipSending = errors.New("skip sending heartbeats and only save to offline db")
-
 // SaveHeartbeats saves heartbeats to the offline db without trying to send to the API.
 // Used when we have more heartbeats than `offline.SendLimit`, when we couldn't send
 // heartbeats to the API, or the API returned an auth error.
@@ -66,11 +64,8 @@ func saveHeartbeats(
 	}
 
 	handleOpts := initHandleOptions()
-	sender := heartbeat.NewHandle(Noop{},
-		filter.WithLengthValidator(),
-		offline.WithAIBuffering(queueFilepath),
-		offline.WithQueue(queueFilepath),
-	)
+	store := offline.ReplayQueue(queueFilepath, loaded.API.Routing())
+	sender := filter.WithLengthValidator()(offline.WithAIBuffering(queueFilepath)(store))
 	handle := handler.New(v, handler.Config{
 		Params: loaded,
 		ParamsLoader: func(ctx context.Context, v *viper.Viper, order params.FlagReadOrder) (params.Params, error) {
@@ -79,12 +74,8 @@ func saveHeartbeats(
 				return params.Params{}, err
 			}
 
-			// Queue records omit API destinations, so project-routed records can drain to the global account.
-			if project.API.Key == "" || project.API.Key != loaded.API.Key || project.API.URL != loaded.API.URL ||
-				len(project.API.KeyPatterns) > 0 || len(project.API.URLPatterns) > 0 {
-				return params.Params{}, errors.New(
-					"offline queue cannot preserve project API routing, send with --disable-offline",
-				)
+			if project.API.Key == "" {
+				return params.Params{}, errors.New("offline queue cannot determine project API routing")
 			}
 
 			return project, nil
@@ -93,11 +84,8 @@ func saveHeartbeats(
 	})(sender)
 
 	_, err := handle(ctx, heartbeats)
-	if err != nil && !errors.Is(err, errSkipSending) {
-		return err
-	}
 
-	return nil
+	return err
 }
 
 func initHandleOptions() []handler.Preprocessor {
@@ -107,6 +95,7 @@ func initHandleOptions() []handler.Preprocessor {
 		handler.WithHeartbeatFiltering(),
 		handler.WithAIFiltering(),
 		handler.WithRemoteDetection(),
+		handler.WithAPIKeyReplacing(),
 		handler.WithFileStatsDetection(),
 		handler.WithLanguageDetection(),
 		handler.WithDependencyDetection(),
@@ -164,12 +153,4 @@ func setLogFields(ctx context.Context, params params.Params) {
 	if params.Heartbeat.IsWrite != nil {
 		log.AddField(ctx, "is_write", params.Heartbeat.IsWrite)
 	}
-}
-
-// Noop is a noop api client, used by offline.SaveHeartbeats.
-type Noop struct{}
-
-// SendHeartbeats always returns an error.
-func (Noop) SendHeartbeats(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-	return nil, errSkipSending
 }

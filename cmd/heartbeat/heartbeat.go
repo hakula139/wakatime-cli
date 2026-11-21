@@ -143,7 +143,10 @@ func buildHandle(ctx context.Context, v *viper.Viper, params params.Params, queu
 	}
 
 	if !params.Offline.Disabled {
-		handleOpts = append(handleOpts, offline.WithAIBuffering(queueFilepath), offline.WithQueue(queueFilepath))
+		handleOpts = append(handleOpts,
+			offline.WithAIBuffering(queueFilepath),
+			offline.WithQueue(queueFilepath, params.API.Routing()),
+		)
 	}
 
 	handleOpts = append(handleOpts, backoff.WithBackoff(backoff.Config{
@@ -318,6 +321,10 @@ func sendPreparedHeartbeats(
 		err := offlinecmd.SaveHeartbeatsWithParams(ctx, v, queueFilepath, heartbeats, params)
 		if err == nil {
 			return nil
+		}
+
+		if errors.Is(err, offline.ErrUnreplayableRoute) {
+			return fmt.Errorf("failed to save rate limited heartbeats: %w", err)
 		}
 
 		logger.Errorf("failed to save rate limited heartbeats: %s", err)

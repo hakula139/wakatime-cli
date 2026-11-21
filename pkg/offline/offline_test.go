@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
+	"github.com/wakatime/wakatime-cli/pkg/apikey"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/ini"
 	"github.com/wakatime/wakatime-cli/pkg/offline"
@@ -90,7 +91,7 @@ func TestWithQueue(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Len(t, hh, 2)
@@ -156,6 +157,28 @@ func TestWithQueue(t *testing.T) {
 	assert.JSONEq(t, string(dataJs), stored[0].Heartbeat)
 }
 
+func TestWithQueueRejectsMissingReceiptForUnreplayableDestination(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	config := apikey.Config{DefaultAPIURL: "https://default.example", DefaultAPIKey: "default-key"}
+	safe := heartbeat.Heartbeat{APIURL: config.DefaultAPIURL, APIKey: config.DefaultAPIKey, Entity: "main.go", Time: 1}
+	other := safe
+	other.APIURL = "https://other.example"
+
+	handle := offline.WithQueue(path, config)(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		return []heartbeat.Result{{Heartbeat: safe, Status: http.StatusTooManyRequests}}, nil
+	})
+
+	_, err := handle(t.Context(), []heartbeat.Heartbeat{other, safe})
+	require.ErrorContains(t, err, "offline queue cannot preserve API routing")
+
+	stored, err := offline.ReadHeartbeats(t.Context(), path, 2)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, safe.Entity, stored[0].Entity)
+	assert.Empty(t, stored[0].APIKey)
+	assert.Empty(t, stored[0].APIURL)
+}
+
 func TestWithQueue_NoHeartbeats(t *testing.T) {
 	// setup
 	f, err := os.CreateTemp(t.TempDir(), "")
@@ -163,7 +186,7 @@ func TestWithQueue_NoHeartbeats(t *testing.T) {
 
 	defer f.Close()
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Len(t, hh, 0)
@@ -186,7 +209,7 @@ func TestWithQueue_ApiError(t *testing.T) {
 
 	defer f.Close()
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Equal(t, hh, []heartbeat.Heartbeat{
@@ -249,7 +272,7 @@ func TestWithQueue_InvalidResults(t *testing.T) {
 
 	defer f.Close()
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Equal(t, hh, testHeartbeats())
@@ -335,7 +358,7 @@ func TestWithQueue_HandleLeftovers(t *testing.T) {
 
 	defer f.Close()
 
-	opt := offline.WithQueue(f.Name())
+	opt := offline.WithQueue(f.Name(), apikey.Config{})
 
 	handle := opt(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		assert.Equal(t, hh, testHeartbeats())
@@ -403,7 +426,8 @@ func TestWithQueue_BadRequestDoesNotRequeue(t *testing.T) {
 
 	defer f.Close()
 
-	handle := offline.WithQueue(f.Name())(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+	queue := offline.WithQueue(f.Name(), apikey.Config{})
+	handle := queue(func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		require.Len(t, hh, 1)
 
 		return []heartbeat.Result{{
@@ -1433,7 +1457,8 @@ func TestWithQueue_CorruptDBResetsAndSavesHeartbeats(t *testing.T) {
 		UserAgent:  "wakatime/test",
 	}
 
-	handle := offline.WithQueue(queuePath)(func(context.Context, []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+	queue := offline.WithQueue(queuePath, apikey.Config{})
+	handle := queue(func(context.Context, []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		return nil, errors.New("api unavailable")
 	})
 

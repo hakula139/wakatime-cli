@@ -206,6 +206,8 @@ With this configuration:
 - When no api_url or no api_key are present(`.* = `), the default api_key and api_url are used
 - ⁠Files not matching the work or personal regex patterns are sent to both the default api url and your-backup-server.com (duplicated/tee'd)
 
+For custom routing, the CLI queues a heartbeat for offline retry only when its stored entity and the global configuration identify a single destination with the same API URL and key selected for delivery. If multiple destinations match, or project-local settings or a hidden path prevent that match, the CLI reports an error when saving the heartbeat.
+
 ### Api Key Environment Variable
 
 If a `WAKATIME_API_KEY` env var exists, wakatime-cli will use its value as the api key.

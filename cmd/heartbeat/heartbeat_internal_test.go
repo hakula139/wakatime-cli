@@ -1,6 +1,7 @@
 package heartbeat
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -142,8 +143,13 @@ func TestSendPreparedHeartbeatsBuildHandleErrorSavesProjectConfiguredOverflow(t 
 	v.Set("key", "00000000-0000-4000-8000-000000000000")
 	v.Set("api-url", params.API.URL)
 	params.API.Key = v.GetString("key")
+	v.Set("project_api_key.unrelated", "00000000-0000-4000-8000-000000000001")
+	apiParams, err := paramspkg.LoadAPIParams(t.Context(), v, paramspkg.FlagReadOrderFlagPrecedence)
+	require.NoError(t, err)
 
-	err := sendPreparedHeartbeats(
+	params.API.KeyPatterns = apiParams.KeyPatterns
+
+	err = sendPreparedHeartbeats(
 		t.Context(),
 		v,
 		params,
@@ -268,6 +274,15 @@ func TestSendPreparedHeartbeatsWithoutOfflineChecksResults(t *testing.T) {
 	}
 }
 
+func TestValidateDirectResultsRejectsUnassociatedReceipt(t *testing.T) {
+	handle := validateDirectResults(func(_ context.Context, _ []heartbeatpkg.Heartbeat) ([]heartbeatpkg.Result, error) {
+		return []heartbeatpkg.Result{{Status: http.StatusCreated}}, nil
+	})
+
+	_, err := handle(t.Context(), []heartbeatpkg.Heartbeat{internalAppHeartbeat()})
+	assert.ErrorContains(t, err, "received a result without a matching heartbeat")
+}
+
 func TestSendPreparedHeartbeatsReportsOverflowSaveFailure(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -311,14 +326,14 @@ func TestSendPreparedHeartbeatsReportsOverflowSaveFailure(t *testing.T) {
 	}
 }
 
-func TestSendPreparedHeartbeatsDoesNotQueueProjectRoutedOverflow(t *testing.T) {
+func TestSendPreparedHeartbeatsDoesNotQueueUnreplayableProjectRoutes(t *testing.T) {
 	const (
 		defaultKey       = "00000000-0000-4000-8000-000000000000"
 		projectKey       = "00000000-0000-4000-8000-000000000001"
 		projectTimestamp = offlinepkg.SendLimit + 1
 	)
 
-	var defaultCount, projectCount atomic.Int32
+	var defaultCount, projectCount, projectStatus atomic.Int32
 
 	defaultAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Basic "+base64.StdEncoding.EncodeToString([]byte(defaultKey)), r.Header.Get("Authorization"))
@@ -353,7 +368,15 @@ func TestSendPreparedHeartbeatsDoesNotQueueProjectRoutedOverflow(t *testing.T) {
 		}
 
 		projectCount.Add(int32(len(sent)))
-		writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
+
+		switch status := int(projectStatus.Load()); status {
+		case http.StatusNotFound:
+			w.WriteHeader(status)
+		case http.StatusTooManyRequests:
+			writeHeartbeatResults(t, w, len(sent), status)
+		default:
+			writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
+		}
 	}))
 	defer projectAPI.Close()
 
@@ -372,21 +395,62 @@ func TestSendPreparedHeartbeatsDoesNotQueueProjectRoutedOverflow(t *testing.T) {
 		projectKey,
 	)
 	extra := internalProjectHeartbeat(t, []byte(config))
-	heartbeats := internalAppHeartbeats(offlinepkg.SendLimit + 1)
+	heartbeats := internalAppHeartbeats(offlinepkg.SendLimit + 2)
 	heartbeats[offlinepkg.SendLimit] = extra
 
 	err = sendPreparedHeartbeats(t.Context(), v, loaded, queueFile, heartbeats, loadAISyncParams)
-	assert.ErrorContains(t, err, "offline queue cannot preserve project API routing")
+	require.ErrorContains(t, err, "offline queue cannot preserve API routing")
 
-	require.NoError(t, offlinesync.SyncOfflineActivity(t.Context(), v, queueFile))
 	assert.EqualValues(t, offlinepkg.SendLimit, defaultCount.Load())
+	require.NoError(t, offlinesync.SyncOfflineActivity(t.Context(), v, queueFile))
+	assert.EqualValues(t, offlinepkg.SendLimit+1, defaultCount.Load())
 	assert.Zero(t, projectCount.Load())
 
 	loaded.Offline.Disabled = true
 	err = sendPreparedHeartbeats(t.Context(), v, loaded, queueFile, []heartbeatpkg.Heartbeat{extra}, loadAISyncParams)
 	require.NoError(t, err)
-	assert.EqualValues(t, offlinepkg.SendLimit, defaultCount.Load())
+	assert.EqualValues(t, offlinepkg.SendLimit+1, defaultCount.Load())
 	assert.EqualValues(t, 1, projectCount.Load())
+
+	loaded.Offline.Disabled = false
+
+	for _, status := range []int{http.StatusNotFound, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			projectStatus.Store(int32(status))
+			projectCount.Store(0)
+
+			err := sendPreparedHeartbeats(
+				t.Context(), v, loaded, queueFile, []heartbeatpkg.Heartbeat{extra}, loadAISyncParams,
+			)
+			require.ErrorContains(t, err, "offline queue cannot preserve API routing")
+
+			if status == http.StatusNotFound {
+				var apiErr api.Err
+				assert.ErrorAs(t, err, &apiErr)
+			}
+
+			require.NoError(t, offlinesync.SyncOfflineActivity(t.Context(), v, queueFile))
+			assert.EqualValues(t, offlinepkg.SendLimit+1, defaultCount.Load())
+			assert.EqualValues(t, 1, projectCount.Load())
+		})
+	}
+
+	t.Run("rate limited", func(t *testing.T) {
+		projectCount.Store(0)
+
+		loaded.Offline.LastSentAt = time.Now()
+		loaded.Offline.RateLimit = time.Hour
+		batch := []heartbeatpkg.Heartbeat{extra, heartbeats[0]}
+
+		err := sendPreparedHeartbeats(t.Context(), v, loaded, queueFile, batch, loadAISyncParams)
+		require.ErrorIs(t, err, offlinepkg.ErrUnreplayableRoute)
+
+		assert.Zero(t, projectCount.Load())
+		assert.EqualValues(t, offlinepkg.SendLimit+1, defaultCount.Load())
+
+		require.NoError(t, offlinesync.SyncOfflineActivity(t.Context(), v, queueFile))
+		assert.EqualValues(t, offlinepkg.SendLimit+2, defaultCount.Load())
+	})
 }
 
 func writeHeartbeatResults(t *testing.T, w http.ResponseWriter, count, firstStatus int) {

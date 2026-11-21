@@ -294,6 +294,16 @@ type (
 	}
 )
 
+// Routing returns the configuration used to select a heartbeat's API destinations.
+func (a API) Routing() apikey.Config {
+	return apikey.Config{
+		DefaultAPIKey: a.Key,
+		DefaultAPIURL: a.URL,
+		MapPatterns:   a.KeyPatterns,
+		URLPatterns:   a.URLPatterns,
+	}
+}
+
 // LoadAPIParams loads API params from viper.Viper instance. Returns ErrAuth
 // if failed to retrieve api key.
 func LoadAPIParams(ctx context.Context, v *viper.Viper, order FlagReadOrder) (API, error) {

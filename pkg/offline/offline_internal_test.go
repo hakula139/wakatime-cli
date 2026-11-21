@@ -196,7 +196,7 @@ func TestResetCorruptDBHelpers(t *testing.T) {
 func TestHandleResultsStopsWhenResultHasNoHeartbeat(t *testing.T) {
 	results := []heartbeat.Result{{Status: 201}}
 
-	stop, err := handleResults(t.Context(), filepath.Join(t.TempDir(), "offline.bdb"), results, nil)
+	stop, err := handleResults(t.Context(), nil, storedResultID, results, nil)
 
 	require.NoError(t, err)
 	assert.True(t, stop)

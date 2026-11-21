@@ -125,12 +125,7 @@ func syncOfflineActivityLegacy(ctx context.Context, v *viper.Viper, queueFilepat
 
 	handle := heartbeat.NewHandle(apiClient,
 		offline.WithSync(queueFilepath, offlineParams.SyncMax),
-		apikey.WithReplacing(apikey.Config{
-			DefaultAPIKey: apiParams.Key,
-			DefaultAPIURL: apiParams.URL,
-			MapPatterns:   apiParams.KeyPatterns,
-			URLPatterns:   apiParams.URLPatterns,
-		}),
+		apikey.WithReplacing(apiParams.Routing()),
 	)
 
 	_, err = handle(ctx, nil)
@@ -206,12 +201,7 @@ func SyncOfflineActivity(ctx context.Context, v *viper.Viper, queueFilepath stri
 
 	handle := heartbeat.NewHandle(apiClient,
 		offline.WithSync(queueFilepath, offlineParams.SyncMax),
-		apikey.WithReplacing(apikey.Config{
-			DefaultAPIKey: apiParams.Key,
-			DefaultAPIURL: apiParams.URL,
-			MapPatterns:   apiParams.KeyPatterns,
-			URLPatterns:   apiParams.URLPatterns,
-		}),
+		apikey.WithReplacing(apiParams.Routing()),
 	)
 
 	_, err = handle(ctx, nil)
