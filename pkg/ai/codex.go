@@ -616,9 +616,12 @@ func (g Codex) handleTranscriptLine(
 
 	// A turn can run in a different directory than the session started in,
 	// for example a worktree, so relative patch paths follow the latest cwd.
-	if logLine.Type == "turn_context" && logLine.Payload != nil && logLine.Payload.Cwd != nil &&
-		strings.TrimSpace(*logLine.Payload.Cwd) != "" {
-		session.cwd = strings.TrimSpace(*logLine.Payload.Cwd)
+	var turnCwd string
+	if logLine.Type == "turn_context" && logLine.Payload != nil && logLine.Payload.Cwd != nil {
+		turnCwd = strings.TrimSpace(*logLine.Payload.Cwd)
+		if turnCwd != "" {
+			session.cwd = turnCwd
+		}
 	}
 
 	after := g.After
@@ -635,7 +638,7 @@ func (g Codex) handleTranscriptLine(
 
 	state.trackSubscriptionPlan(logLine)
 	state.trackModel(logLine)
-	g.backfillUserModel(logLine, *session, state)
+	g.backfillUserContext(logLine, *session, state, turnCwd)
 	state.trackUserMessage(logLine)
 
 	if patchHeartbeats, handled := g.handlePendingPatch(logLine, *session, state); handled {
@@ -688,21 +691,34 @@ func (g Codex) handleTranscriptLine(
 	state.trackAssistantMessage(logLine)
 }
 
-// backfillUserModel only associates consecutive prompts with their immediately
-// following context. Never propagate a later turn's user agent across responses,
-// turn boundaries, or transcripts. Build the shared string once for the range.
-func (g Codex) backfillUserModel(logLine codexLogLine, session codexSessionState, state *codexParseState) {
+// backfillUserContext associates consecutive prompts with their immediately
+// following turn context without crossing other transcript events.
+func (g Codex) backfillUserContext(
+	logLine codexLogLine,
+	session codexSessionState,
+	state *codexParseState,
+	turnCwd string,
+) {
 	if state.pendingUserStart == state.pendingUserEnd || codexIsUserMessage(logLine) {
 		return
 	}
 
-	if logLine.Type == "turn_context" && state.model != "" {
-		userAgent := g.userAgent(session.entity,
-			codexAgentVersion(state.model, state.reasoningEffort), session.version,
-			session.source, g.UserAgents, g.FallbackUserAgent)
+	if logLine.Type == "turn_context" {
+		var userAgent string
+		if state.model != "" {
+			userAgent = g.userAgent(session.entity,
+				codexAgentVersion(state.model, state.reasoningEffort), session.version,
+				session.source, g.UserAgents, g.FallbackUserAgent)
+		}
 
 		for i := state.pendingUserStart; i < state.pendingUserEnd; i++ {
-			state.heartbeats[i].UserAgent = userAgent
+			if state.model != "" {
+				state.heartbeats[i].UserAgent = userAgent
+			}
+
+			if turnCwd != "" {
+				state.heartbeats[i].ProjectPathOverride = turnCwd
+			}
 		}
 	}
 
@@ -1381,6 +1397,7 @@ func (g Codex) patchHeartbeats(
 			if currentFile != "" {
 				heartbeats = append(heartbeats, g.heartbeat(
 					currentFile,
+					cwd,
 					sessionID,
 					timestamp,
 					version,
@@ -1414,6 +1431,7 @@ func (g Codex) patchHeartbeats(
 	if currentFile != "" {
 		heartbeats = append(heartbeats, g.heartbeat(
 			currentFile,
+			cwd,
 			sessionID,
 			timestamp,
 			version,
@@ -1730,6 +1748,7 @@ func codexSourceProduct(source string) string {
 
 func (g Codex) heartbeat(
 	currentFile string,
+	cwd string,
 	sessionID string,
 	timestamp time.Time,
 	version string,
@@ -1761,7 +1780,7 @@ func (g Codex) heartbeat(
 		"",
 		false,
 		"",
-		"",
+		cwd,
 		heartbeatTimestamp(timestamp),
 		g.userAgent(currentFile, agentVersion, version, source, userAgents, fallbackUserAgent),
 	)

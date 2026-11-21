@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wakatime/wakatime-cli/pkg/regex"
+	"github.com/wakatime/wakatime-cli/pkg/windows"
 )
 
 // SanitizeConfig defines how a heartbeat should be sanitized.
@@ -102,7 +103,8 @@ func Sanitize(ctx context.Context, h Heartbeat, config SanitizeConfig) Heartbeat
 	return h
 }
 
-// hideProjectFolder makes entity relative to project folder if we're hiding the project folder.
+// hideProjectFolder keeps the project-relative path when the project contains the
+// file and uses the filename for other local files.
 func hideProjectFolder(h Heartbeat, hideProjectFolder bool) Heartbeat {
 	if h.EntityType != FileType || !hideProjectFolder {
 		return h
@@ -114,8 +116,8 @@ func hideProjectFolder(h Heartbeat, hideProjectFolder bool) Heartbeat {
 			h.ProjectPath += "/"
 		}
 
-		if strings.HasPrefix(h.Entity, h.ProjectPath) {
-			h.Entity = strings.TrimPrefix(h.Entity, h.ProjectPath)
+		if entity, ok := strings.CutPrefix(h.Entity, h.ProjectPath); ok {
+			h.Entity = entity
 			h.ProjectRootCount = nil
 
 			return h
@@ -128,9 +130,24 @@ func hideProjectFolder(h Heartbeat, hideProjectFolder bool) Heartbeat {
 			h.ProjectPathOverride += "/"
 		}
 
-		h.Entity = strings.TrimPrefix(h.Entity, h.ProjectPathOverride)
 		h.ProjectRootCount = nil
+
+		if entity, ok := strings.CutPrefix(h.Entity, h.ProjectPathOverride); ok {
+			h.Entity = entity
+			return h
+		}
 	}
+
+	switch {
+	case filepath.IsAbs(h.Entity), strings.HasPrefix(h.Entity, "/"):
+		h.Entity = filepath.Base(h.Entity)
+	case windows.IsWindowsNetworkMount(h.Entity):
+		h.Entity = filepath.Base(windows.FormatFilePath(h.Entity))
+	default:
+		return h
+	}
+
+	h.ProjectRootCount = nil
 
 	return h
 }
