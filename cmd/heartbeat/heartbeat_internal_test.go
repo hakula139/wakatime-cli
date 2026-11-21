@@ -1,18 +1,22 @@
 package heartbeat
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wakatime/wakatime-cli/cmd/offlinesync"
 	"github.com/wakatime/wakatime-cli/pkg/api"
 	heartbeatpkg "github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	offlinepkg "github.com/wakatime/wakatime-cli/pkg/offline"
@@ -136,6 +140,8 @@ func TestSendPreparedHeartbeatsBuildHandleErrorSavesProjectConfiguredOverflow(t 
 	heartbeats[offlinepkg.SendLimit] = extra
 	v := viper.New()
 	v.Set("key", "00000000-0000-4000-8000-000000000000")
+	v.Set("api-url", params.API.URL)
+	params.API.Key = v.GetString("key")
 
 	err := sendPreparedHeartbeats(
 		t.Context(),
@@ -164,6 +170,7 @@ func TestSendPreparedHeartbeatsWithoutOfflineSendsEveryBatch(t *testing.T) {
 	v.Set("internal-config", filepath.Join(t.TempDir(), "internal.cfg"))
 
 	var batches [][]float64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var sent []heartbeatpkg.Heartbeat
 		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&sent)) {
@@ -175,8 +182,10 @@ func TestSendPreparedHeartbeatsWithoutOfflineSendsEveryBatch(t *testing.T) {
 		for i, h := range sent {
 			timestamps[i] = h.Time
 		}
+
 		batches = append(batches, timestamps)
-		writeHeartbeatResults(t, w, len(sent))
+
+		writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
 	}))
 	defer server.Close()
 
@@ -195,6 +204,70 @@ func TestSendPreparedHeartbeatsWithoutOfflineSendsEveryBatch(t *testing.T) {
 	assert.NoFileExists(t, queueFile)
 }
 
+func TestSendPreparedHeartbeatsWithoutOfflineChecksResults(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		incomplete bool
+		wantError  string
+	}{
+		{name: "retryable rejection", status: http.StatusTooManyRequests, wantError: "status 429"},
+		{name: "missing receipt", status: http.StatusCreated, incomplete: true, wantError: "received 9 results"},
+		{name: "permanent rejection", status: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			queueFile := filepath.Join(t.TempDir(), "offline.bdb")
+			params := internalCommandParams()
+			params.Offline.Disabled = true
+			v := viper.New()
+			v.Set("internal-config", filepath.Join(t.TempDir(), "internal.cfg"))
+
+			var calls atomic.Int32
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var sent []heartbeatpkg.Heartbeat
+				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&sent)) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+
+				if calls.Add(1) == 1 {
+					count := len(sent)
+					if tt.incomplete {
+						count--
+					}
+
+					writeHeartbeatResults(t, w, count, tt.status)
+
+					return
+				}
+
+				writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
+			}))
+			defer server.Close()
+
+			params.API.URL = server.URL
+			heartbeats := internalAppHeartbeats(offlinepkg.SendLimit + 1)
+
+			err := sendPreparedHeartbeats(t.Context(), v, params, queueFile, heartbeats, loadParams)
+
+			if tt.wantError != "" {
+				var apiErr api.Err
+				assert.ErrorAs(t, err, &apiErr)
+				assert.ErrorContains(t, err, tt.wantError)
+				assert.EqualValues(t, 1, calls.Load())
+			} else {
+				require.NoError(t, err)
+				assert.EqualValues(t, 2, calls.Load())
+			}
+
+			assert.NoFileExists(t, queueFile)
+		})
+	}
+}
+
 func TestSendPreparedHeartbeatsReportsOverflowSaveFailure(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -210,9 +283,10 @@ func TestSendPreparedHeartbeatsReportsOverflowSaveFailure(t *testing.T) {
 			params := internalCommandParams()
 			v := viper.New()
 			v.Set("internal-config", filepath.Join(t.TempDir(), "internal.cfg"))
+
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.status == http.StatusCreated {
-					writeHeartbeatResults(t, w, offlinepkg.SendLimit)
+					writeHeartbeatResults(t, w, offlinepkg.SendLimit, http.StatusCreated)
 					return
 				}
 
@@ -228,6 +302,7 @@ func TestSendPreparedHeartbeatsReportsOverflowSaveFailure(t *testing.T) {
 
 			require.ErrorContains(t, err, "failed to save extra heartbeats to offline queue")
 			assert.ErrorContains(t, err, "failed to load project-level configuration file")
+
 			if tt.status == http.StatusUnauthorized {
 				var authErr api.ErrAuth
 				assert.ErrorAs(t, err, &authErr)
@@ -236,12 +311,94 @@ func TestSendPreparedHeartbeatsReportsOverflowSaveFailure(t *testing.T) {
 	}
 }
 
-func writeHeartbeatResults(t *testing.T, w http.ResponseWriter, count int) {
+func TestSendPreparedHeartbeatsDoesNotQueueProjectRoutedOverflow(t *testing.T) {
+	const (
+		defaultKey       = "00000000-0000-4000-8000-000000000000"
+		projectKey       = "00000000-0000-4000-8000-000000000001"
+		projectTimestamp = offlinepkg.SendLimit + 1
+	)
+
+	var defaultCount, projectCount atomic.Int32
+
+	defaultAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Basic "+base64.StdEncoding.EncodeToString([]byte(defaultKey)), r.Header.Get("Authorization"))
+
+		var sent []heartbeatpkg.Heartbeat
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&sent)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		for _, h := range sent {
+			assert.NotEqualValues(t, projectTimestamp, h.Time)
+		}
+
+		defaultCount.Add(int32(len(sent)))
+		writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
+	}))
+	defer defaultAPI.Close()
+
+	projectAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Basic "+base64.StdEncoding.EncodeToString([]byte(projectKey)), r.Header.Get("Authorization"))
+
+		var sent []heartbeatpkg.Heartbeat
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&sent)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		for _, h := range sent {
+			assert.EqualValues(t, projectTimestamp, h.Time)
+			assert.Equal(t, "HIDDEN.go", h.Entity)
+		}
+
+		projectCount.Add(int32(len(sent)))
+		writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
+	}))
+	defer projectAPI.Close()
+
+	queueFile := filepath.Join(t.TempDir(), "offline.bdb")
+	v := viper.New()
+	v.Set("internal-config", filepath.Join(t.TempDir(), "internal.cfg"))
+	v.Set("settings.api_url", defaultAPI.URL)
+	v.Set("settings.api_key", defaultKey)
+
+	loaded, err := loadAISyncParams(t.Context(), v, paramspkg.FlagReadOrderFlagPrecedence)
+	require.NoError(t, err)
+
+	config := fmt.Sprintf(
+		"[settings]\napi_url = %s\napi_key = %s\nhide_file_names = true\n",
+		projectAPI.URL,
+		projectKey,
+	)
+	extra := internalProjectHeartbeat(t, []byte(config))
+	heartbeats := internalAppHeartbeats(offlinepkg.SendLimit + 1)
+	heartbeats[offlinepkg.SendLimit] = extra
+
+	err = sendPreparedHeartbeats(t.Context(), v, loaded, queueFile, heartbeats, loadAISyncParams)
+	assert.ErrorContains(t, err, "offline queue cannot preserve project API routing")
+
+	require.NoError(t, offlinesync.SyncOfflineActivity(t.Context(), v, queueFile))
+	assert.EqualValues(t, offlinepkg.SendLimit, defaultCount.Load())
+	assert.Zero(t, projectCount.Load())
+
+	loaded.Offline.Disabled = true
+	err = sendPreparedHeartbeats(t.Context(), v, loaded, queueFile, []heartbeatpkg.Heartbeat{extra}, loadAISyncParams)
+	require.NoError(t, err)
+	assert.EqualValues(t, offlinepkg.SendLimit, defaultCount.Load())
+	assert.EqualValues(t, 1, projectCount.Load())
+}
+
+func writeHeartbeatResults(t *testing.T, w http.ResponseWriter, count, firstStatus int) {
 	t.Helper()
 
 	responses := make([]json.RawMessage, count)
 	for i := range responses {
 		responses[i] = json.RawMessage(`[{"data":{"id":"example"}},201]`)
+	}
+
+	if count > 0 && firstStatus != http.StatusCreated {
+		responses[0] = json.RawMessage(fmt.Sprintf(`[{"error":"rejected"},%d]`, firstStatus))
 	}
 
 	w.WriteHeader(http.StatusCreated)

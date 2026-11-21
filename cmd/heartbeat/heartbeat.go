@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -152,7 +153,42 @@ func buildHandle(ctx context.Context, v *viper.Viper, params params.Params, queu
 		HasProxy: params.API.ProxyURL != "",
 	}))
 
+	if params.Offline.Disabled {
+		handleOpts = append(handleOpts, validateDirectResults)
+	}
+
 	return heartbeat.NewHandle(apiClient, handleOpts...), nil
+}
+
+func validateDirectResults(next heartbeat.Handle) heartbeat.Handle {
+	return func(ctx context.Context, heartbeats []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+		results, err := next(ctx, heartbeats)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(results) != len(heartbeats) {
+			return nil, api.Err{Err: fmt.Errorf(
+				"expected %d heartbeat results, received %d results", len(heartbeats), len(results),
+			)}
+		}
+
+		for _, result := range results {
+			if result.Heartbeat.Entity == "" && result.Heartbeat.Time == 0 {
+				return nil, api.Err{Err: errors.New("received a result without a matching heartbeat")}
+			}
+
+			if result.Status == http.StatusBadRequest || (result.Status >= http.StatusOK && result.Status <= 299) {
+				continue
+			}
+
+			return nil, api.Err{Err: fmt.Errorf(
+				"heartbeat rejected with status %d: %s", result.Status, strings.Join(result.Errors, " "),
+			)}
+		}
+
+		return results, nil
+	}
 }
 
 // BuildHeartbeats builds the command line heartbeat then appends any extra stdin heartbeats.

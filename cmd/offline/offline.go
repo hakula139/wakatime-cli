@@ -74,7 +74,20 @@ func saveHeartbeats(
 	handle := handler.New(v, handler.Config{
 		Params: loaded,
 		ParamsLoader: func(ctx context.Context, v *viper.Viper, order params.FlagReadOrder) (params.Params, error) {
-			return loadParams(ctx, v, order, params.LoadHeartbeatProcessingParams)
+			project, err := loadParams(ctx, v, order, params.LoadHeartbeatProcessingParams)
+			if err != nil {
+				return params.Params{}, err
+			}
+
+			// Queue records omit API destinations, so project-routed records can drain to the global account.
+			if project.API.Key == "" || project.API.Key != loaded.API.Key || project.API.URL != loaded.API.URL ||
+				len(project.API.KeyPatterns) > 0 || len(project.API.URLPatterns) > 0 {
+				return params.Params{}, errors.New(
+					"offline queue cannot preserve project API routing, send with --disable-offline",
+				)
+			}
+
+			return project, nil
 		},
 		Opts: handleOpts,
 	})(sender)
