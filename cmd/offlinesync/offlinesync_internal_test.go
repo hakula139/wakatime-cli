@@ -1,17 +1,22 @@
 package offlinesync
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
+	"github.com/wakatime/wakatime-cli/pkg/offline"
+
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -107,6 +112,59 @@ func TestSyncOfflineActivityLegacy(t *testing.T) {
 	assert.NoFileExists(t, f.Name())
 
 	assert.Equal(t, 1, numCalls)
+}
+
+func TestSyncOfflineActivityLegacy_RetainsUnconfirmedHeartbeats(t *testing.T) {
+	testServerURL, router, tearDown := setupTestServer()
+	defer tearDown()
+
+	batches := make(chan []heartbeat.Heartbeat, 2)
+
+	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
+		var batch []heartbeat.Heartbeat
+		if !assert.NoError(t, json.NewDecoder(req.Body).Decode(&batch)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		batches <- batch
+
+		w.WriteHeader(http.StatusCreated)
+		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"accepted"}},201]]}`)
+		assert.NoError(t, err)
+	})
+
+	hh := []heartbeat.Heartbeat{
+		{Entity: "/tmp/main.go", EntityType: heartbeat.FileType, Time: 2000},
+		{Entity: "/tmp/util.go", EntityType: heartbeat.FileType, Time: 1000},
+	}
+
+	queuePath := filepath.Join(t.TempDir(), "legacy.bdb")
+	db, err := bolt.Open(queuePath, 0600, nil)
+	require.NoError(t, err)
+	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
+		return offline.NewQueue(tx).PushMany(hh)
+	}))
+	require.NoError(t, db.Close())
+
+	v := viper.New()
+	v.Set("api-url", testServerURL)
+	v.Set("key", "00000000-0000-4000-8000-000000000000")
+	v.Set("sync-offline-activity", 100)
+
+	require.NoError(t, syncOfflineActivityLegacy(t.Context(), v, queuePath))
+
+	require.Len(t, batches, 1)
+	assert.Equal(t, hh, <-batches)
+	require.FileExists(t, queuePath)
+	stored, err := offline.ReadHeartbeats(t.Context(), queuePath, 2)
+	require.NoError(t, err)
+	assert.Equal(t, hh[1:], stored)
+
+	require.NoError(t, syncOfflineActivityLegacy(t.Context(), v, queuePath))
+
+	require.Len(t, batches, 1)
+	assert.Equal(t, hh[1:], <-batches)
+	assert.NoFileExists(t, queuePath)
 }
 
 func TestSyncOfflineActivityLegacy_InvalidAPIKey(t *testing.T) {

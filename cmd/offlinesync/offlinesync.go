@@ -123,6 +123,15 @@ func syncOfflineActivityLegacy(ctx context.Context, v *viper.Viper, queueFilepat
 		return err
 	}
 
+	remaining, err := offline.CountHeartbeats(ctx, queueFilepath)
+	if err != nil {
+		return fmt.Errorf("failed to count remaining legacy heartbeats: %w", err)
+	}
+
+	if remaining > 0 {
+		return nil
+	}
+
 	logger := log.Extract(ctx)
 
 	if err := os.Remove(queueFilepath); err != nil {
