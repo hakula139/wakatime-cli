@@ -295,12 +295,12 @@ type (
 )
 
 // Routing returns the configuration used to select a heartbeat's API destinations.
-func (a API) Routing() apikey.Config {
+func (p API) Routing() apikey.Config {
 	return apikey.Config{
-		DefaultAPIKey: a.Key,
-		DefaultAPIURL: a.URL,
-		MapPatterns:   a.KeyPatterns,
-		URLPatterns:   a.URLPatterns,
+		DefaultAPIKey: p.Key,
+		DefaultAPIURL: p.URL,
+		MapPatterns:   p.KeyPatterns,
+		URLPatterns:   p.URLPatterns,
 	}
 }
 
