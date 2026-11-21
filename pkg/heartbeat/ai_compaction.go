@@ -34,6 +34,7 @@ func CompactAIHeartbeats(heartbeats []Heartbeat) []Heartbeat {
 	groups := make(map[groupKey]*heartbeatGroup)
 	seen := make(map[string]struct{})
 	retained := make([]bool, len(ordered))
+
 	var previousProject string
 
 	for i, h := range ordered {
@@ -57,6 +58,7 @@ func CompactAIHeartbeats(heartbeats []Heartbeat) []Heartbeat {
 
 		if project != previousProject {
 			clear(groups)
+
 			previousProject = project
 		}
 
