@@ -1095,14 +1095,13 @@ func TestWithAISync_PreservesRawEventsAndMatchesIntermediateActivity(t *testing.
 			assert.Equal(t, want.cachedTokens, h.AICachedInputTokens, "heartbeat %d", i)
 			assert.Equal(t, want.outputTokens, h.AIOutputTokens, "heartbeat %d", i)
 			assert.Equal(t, want.promptLength, h.AIPromptLength, "heartbeat %d", i)
+			assert.Equal(t, "/Users/user/git/wakatime-cli", h.ProjectPathOverride, "heartbeat %d", i)
 
 			if want.isWrite {
 				require.NotNil(t, h.AILineChanges, "heartbeat %d", i)
 				assert.Equal(t, want.aiLineChanges, *h.AILineChanges, "heartbeat %d", i)
-				assert.Empty(t, h.ProjectPathOverride, "heartbeat %d", i)
 			} else {
 				assert.Nil(t, h.AILineChanges, "heartbeat %d", i)
-				assert.Equal(t, "/Users/user/git/wakatime-cli", h.ProjectPathOverride, "heartbeat %d", i)
 			}
 
 			assert.Equal(t, "019d9353-333c-7c41-a909-26f5c6221a5a", h.AISession, "heartbeat %d", i)

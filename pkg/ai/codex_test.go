@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wakatime/wakatime-cli/pkg/ai"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
+	"github.com/wakatime/wakatime-cli/pkg/project"
 )
 
 func TestCodexParse(t *testing.T) {
@@ -381,6 +382,31 @@ func TestCodexParse_ModelForUserMessageBeforeContext(t *testing.T) {
 				assert.Equal(t, model+"codex-cli/0.141.0 plugin/0.0.1", got[i].UserAgent)
 			}
 		})
+	}
+}
+
+func TestCodexParse_ProjectForUserMessageBeforeContext(t *testing.T) {
+	setupCodexTestHome(t)
+
+	user := `"type":"event_msg","payload":{"type":"user_message","message":"Hello"}`
+	writeCodexTestTranscript(t, "session.jsonl",
+		`{"type":"session_meta","payload":{"id":"session","cwd":"/workspace/original"}}`,
+		`{"timestamp":"2026-10-03T07:00:00Z",`+user+`}`,
+		`{"timestamp":"2026-10-03T07:00:01Z","type":"turn_context","payload":{"cwd":" /workspace/worktree "}}`,
+		`{"timestamp":"2026-10-03T07:01:00Z",`+user+`}`,
+		`{"timestamp":"2026-10-03T07:01:01Z","type":"turn_context","payload":{"cwd":" "}}`,
+		`{"timestamp":"2026-10-03T07:02:00Z",`+user+`}`,
+		`{"timestamp":"2026-10-03T07:02:01Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+		`{"timestamp":"2026-10-03T07:03:00Z","type":"turn_context","payload":{"cwd":"/workspace/next"}}`,
+		`{"timestamp":"2026-10-03T07:03:01Z",`+user+`}`,
+	)
+
+	got, err := (ai.Codex{After: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)}).Parse(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, got, 4)
+	for i, cwd := range []string{"/workspace/worktree", "/workspace/worktree", "/workspace/worktree", "/workspace/next"} {
+		assert.Equal(t, cwd, got[i].ProjectPathOverride)
 	}
 }
 
@@ -1088,6 +1114,63 @@ func TestCodexParse_RelativePatchPathUsesTurnContextCwd(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, filepath.Join("/workspace/worktree", "demo.txt"), got[0].Entity)
+}
+
+func TestCodexParse_PatchProjectFallsBackToTurnContextCwd(t *testing.T) {
+	setupCodexTestHome(t)
+
+	root := t.TempDir()
+	worktree := filepath.Join(root, "active")
+	other := filepath.Join(root, "other")
+	for _, dir := range []string{worktree, other} {
+		git := filepath.Join(dir, ".git")
+		require.NoError(t, os.MkdirAll(git, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(git, "config"), []byte("[core]\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(git, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+	}
+
+	notePath := filepath.Join(root, "notes", "plan.md")
+	otherPath := filepath.Join(other, "demo.txt")
+	patch := strings.Join([]string{
+		"*** Begin Patch",
+		"*** Add File: " + notePath,
+		"+plan",
+		"*** Add File: " + otherPath,
+		"+hello",
+		"*** End Patch",
+	}, "\n")
+
+	writeCodexTestTranscript(t, "session.jsonl",
+		`{"type":"session_meta","payload":{"id":"session","cwd":"/workspace/original"}}`,
+		`{"timestamp":"2026-10-03T07:00:30Z","type":"turn_context","payload":{"cwd":`+jsonString(worktree)+`}}`,
+		`{"timestamp":"2026-10-03T07:01:00Z","type":"response_item","payload":{"type":"custom_tool_call",`+
+			`"name":"apply_patch","call_id":"patch-1","input":`+jsonString(patch)+`}}`,
+		`{"timestamp":"2026-10-03T07:01:01Z","type":"response_item","payload":{"type":"custom_tool_call_output",`+
+			`"call_id":"patch-1","output":"Done"}}`,
+	)
+
+	got, err := (ai.Codex{After: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)}).Parse(t.Context())
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	assert.Equal(t, notePath, got[0].Entity)
+	assert.Equal(t, otherPath, got[1].Entity)
+	for _, h := range got {
+		assert.Equal(t, worktree, h.ProjectPathOverride)
+	}
+
+	detect := project.WithDetection(project.Config{})(
+		func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+			require.NotNil(t, hh[0].Project)
+			assert.Equal(t, "active", *hh[0].Project)
+			require.NotNil(t, hh[1].Project)
+			assert.Equal(t, "other", *hh[1].Project)
+
+			return nil, nil
+		},
+	)
+	_, err = detect(t.Context(), got)
+	require.NoError(t, err)
 }
 
 func TestCodexParse_SkipsGuardianSessions(t *testing.T) {
