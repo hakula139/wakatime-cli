@@ -2,8 +2,11 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/wakatime/wakatime-cli/pkg/file"
@@ -80,18 +83,16 @@ func (g Git) Detect(ctx context.Context) (Result, bool, error) {
 		return Result{}, false, fmt.Errorf("error finding commondir: %s", err)
 	}
 
-	// we found a commondir file so this is a worktree
 	if ok {
-		dir := filepath.Dir(commondir)
+		dir := commondir
+		projectName := strings.TrimSuffix(filepath.Base(commondir), ".git")
 
-		// Commonly commondir file contains a .git folder but there's an exception where
-		// commondir contains the actual git folder. It's common when repo is bare and
-		// it's a worktree.
-		if strings.LastIndex(commondir, ".git") == -1 {
-			dir = commondir
+		if filepath.Base(commondir) == ".git" {
+			dir = filepath.Dir(commondir)
+			projectName = filepath.Base(dir)
 		}
 
-		project := projectOrRemote(ctx, filepath.Base(dir), g.ProjectFromGitRemote, commondir)
+		project := projectOrRemote(ctx, projectName, g.ProjectFromGitRemote, commondir)
 
 		branch, err := findGitBranch(ctx, filepath.Join(gitdir, "HEAD"))
 		if err != nil {
@@ -328,36 +329,60 @@ func findGitRemote(ctx context.Context, fp string) (string, error) {
 			continue
 		}
 
-		if i >= len(lines) {
-			continue
-		}
-
 		for _, subline := range lines[i+1:] {
+			subline = strings.TrimSpace(subline)
 			if strings.HasPrefix(subline, "[") {
 				break
 			}
 
-			if strings.HasPrefix(strings.TrimSpace(subline), "url = ") {
-				remote := strings.Trim(subline, "\n\r\t")
-
-				parts := strings.SplitN(remote, "=", 2)
-				if len(parts) != 2 {
-					return "", fmt.Errorf("invalid origin url from %q: %s", fp, subline)
-				}
-
-				remote = parts[1]
-
-				parts = strings.SplitN(remote, ":", 2)
-				if len(parts) != 2 {
-					return "", fmt.Errorf("invalid origin url from %q: %s", fp, subline)
-				}
-
-				return strings.TrimSuffix(strings.TrimSpace(parts[1]), ".git"), nil
+			key, value, ok := strings.Cut(subline, "=")
+			if ok && strings.TrimSpace(key) == "url" {
+				return gitRemoteProject(strings.TrimSpace(value))
 			}
 		}
 	}
 
 	return "", nil
+}
+
+func gitRemoteProject(remote string) (string, error) {
+	if strings.HasPrefix(remote, `"`) {
+		value, err := strconv.Unquote(remote)
+		if err != nil {
+			return "", errors.New("invalid quoted Git remote URL")
+		}
+
+		remote = value
+	}
+
+	host, path, ok := strings.Cut(remote, ":")
+	if !ok || host == "" || strings.ContainsAny(host, `/\`) || filepath.VolumeName(remote) != "" {
+		return "", nil
+	}
+
+	if strings.HasPrefix(path, "//") {
+		switch strings.ToLower(host) {
+		case "ftp", "ftps", "git", "http", "https", "ssh":
+			parsed, err := url.Parse(remote)
+			if err != nil || parsed.Hostname() == "" {
+				return "", errors.New("invalid Git remote URL")
+			}
+
+			path = strings.TrimPrefix(parsed.Path, "/")
+		default:
+			return "", nil
+		}
+	} else {
+		if strings.Contains(host, "[") {
+			_, path, ok = strings.Cut(remote, "]:")
+		}
+
+		if !ok || strings.HasPrefix(path, ":") || strings.HasPrefix(path, `\`) {
+			return "", nil
+		}
+	}
+
+	return strings.TrimSuffix(path, ".git"), nil
 }
 
 // ID returns its id.

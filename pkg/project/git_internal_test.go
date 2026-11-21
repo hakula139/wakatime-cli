@@ -83,8 +83,9 @@ func TestGitRemoteHelperBranches(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(configPath, []byte(strings.Join([]string{
 		"[remote \"origin\"]",
-		"	url = no-colon",
+		"\turl = https://user:example@%zz/owner/repo.git",
 	}, "\n")), 0600))
-	_, err = findGitRemote(ctx, configPath)
-	require.Error(t, err)
+	remote, err = findGitRemote(ctx, configPath)
+	require.EqualError(t, err, "invalid Git remote URL")
+	assert.Empty(t, remote)
 }
