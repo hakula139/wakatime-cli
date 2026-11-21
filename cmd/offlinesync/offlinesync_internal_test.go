@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -119,6 +120,8 @@ func TestSyncOfflineActivityLegacy_RetainsUnconfirmedHeartbeats(t *testing.T) {
 	defer tearDown()
 
 	batches := make(chan []heartbeat.Heartbeat, 2)
+	releaseResponse := make(chan struct{})
+	unblockResponse := sync.OnceFunc(func() { close(releaseResponse) })
 
 	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, req *http.Request) {
 		var batch []heartbeat.Heartbeat
@@ -129,6 +132,7 @@ func TestSyncOfflineActivityLegacy_RetainsUnconfirmedHeartbeats(t *testing.T) {
 
 		batches <- batch
 
+		<-releaseResponse
 		w.WriteHeader(http.StatusCreated)
 		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"accepted"}},201]]}`)
 		assert.NoError(t, err)
@@ -152,11 +156,34 @@ func TestSyncOfflineActivityLegacy_RetainsUnconfirmedHeartbeats(t *testing.T) {
 	v.Set("key", "00000000-0000-4000-8000-000000000000")
 	v.Set("sync-offline-activity", 100)
 
+	firstSync := make(chan error, 1)
+
+	go func() {
+		defer close(firstSync)
+
+		firstSync <- syncOfflineActivityLegacy(t.Context(), v, queuePath)
+	}()
+
+	defer func() {
+		unblockResponse()
+		<-firstSync
+	}()
+
+	select {
+	case batch := <-batches:
+		assert.Equal(t, hh, batch)
+	case err := <-firstSync:
+		t.Fatalf("first sync finished without sending a batch: %v", err)
+	}
+
 	require.NoError(t, syncOfflineActivityLegacy(t.Context(), v, queuePath))
 
-	require.Len(t, batches, 1)
-	assert.Equal(t, hh, <-batches)
 	require.FileExists(t, queuePath)
+	assert.Empty(t, batches)
+
+	unblockResponse()
+	require.NoError(t, <-firstSync)
+
 	stored, err := offline.ReadHeartbeats(t.Context(), queuePath, 2)
 	require.NoError(t, err)
 	assert.Equal(t, hh[1:], stored)
