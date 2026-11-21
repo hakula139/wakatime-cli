@@ -104,7 +104,7 @@ type (
 		Branch  string
 		Folder  string
 
-		// WorktreeFolder locates files in a linked checkout when Folder is the common repository.
+		// WorktreeFolder locates files when Git keeps its metadata separately.
 		WorktreeFolder string
 	}
 

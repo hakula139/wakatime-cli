@@ -32,36 +32,6 @@ func (g Git) Detect(ctx context.Context) (Result, bool, error) {
 	logger := log.Extract(ctx)
 	fp := g.Filepath
 
-	// Find for submodule takes priority if enabled
-	gitdirSubmodule, ok, err := findSubmodule(ctx, fp, g.SubmoduleDisabledPatterns)
-	if err != nil {
-		return Result{}, false, fmt.Errorf("failed to find submodule: %s", err)
-	}
-
-	if ok {
-		project := projectOrRemote(ctx, filepath.Base(gitdirSubmodule), g.ProjectFromGitRemote, gitdirSubmodule)
-
-		// If submodule has a project map, then use it.
-		if result, ok := matchPattern(ctx, gitdirSubmodule, g.SubmoduleProjectMapPatterns); ok {
-			project = result
-		}
-
-		branch, err := findGitBranch(ctx, filepath.Join(gitdirSubmodule, "HEAD"))
-		if err != nil {
-			logger.Errorf(
-				"error finding branch from %q: %s",
-				filepath.Join(filepath.Dir(gitdirSubmodule), "HEAD"),
-				err,
-			)
-		}
-
-		return Result{
-			Project: project,
-			Branch:  branch,
-			Folder:  filepath.Dir(gitdirSubmodule),
-		}, true, nil
-	}
-
 	// Find for .git file or directory
 	dotGit, found := FindFileOrDirectory(ctx, fp, ".git")
 	if !found {
@@ -74,10 +44,8 @@ func (g Git) Detect(ctx context.Context) (Result, bool, error) {
 		return Result{}, false, fmt.Errorf("error finding gitdir: %s", err)
 	}
 
-	// Commonly .git folder is present when it's a worktree but there's an exception where
-	// worktree is present but .git folder is not present. In that case, we need to find
-	// for worktree folder.
-	// Find for commondir file
+	worktreeFolder := filepath.Dir(dotGit)
+
 	commondir, ok, err := findCommondir(ctx, gitdir)
 	if err != nil {
 		return Result{}, false, fmt.Errorf("error finding commondir: %s", err)
@@ -107,13 +75,17 @@ func (g Git) Detect(ctx context.Context) (Result, bool, error) {
 			Project:        project,
 			Branch:         branch,
 			Folder:         dir,
-			WorktreeFolder: filepath.Dir(dotGit),
+			WorktreeFolder: worktreeFolder,
 		}, true, nil
 	}
 
-	// Otherwise it's only a plain .git file and not a submodule
-	if gitdir != "" && !strings.Contains(gitdir, "modules") {
-		project := projectOrRemote(ctx, filepath.Base(filepath.Join(dotGit, "..")), g.ProjectFromGitRemote, gitdir)
+	isSubmodule := strings.Contains("/"+filepath.ToSlash(filepath.Clean(gitdir)), "/modules/")
+	if isSubmodule && shouldTakeSubmodule(ctx, fp, g.SubmoduleDisabledPatterns) {
+		project := projectOrRemote(ctx, filepath.Base(gitdir), g.ProjectFromGitRemote, gitdir)
+
+		if result, ok := matchPattern(ctx, gitdir, g.SubmoduleProjectMapPatterns); ok {
+			project = result
+		}
 
 		branch, err := findGitBranch(ctx, filepath.Join(gitdir, "HEAD"))
 		if err != nil {
@@ -125,9 +97,31 @@ func (g Git) Detect(ctx context.Context) (Result, bool, error) {
 		}
 
 		return Result{
-			Project: project,
-			Branch:  branch,
-			Folder:  filepath.Join(gitdir, ".."),
+			Project:        project,
+			Branch:         branch,
+			Folder:         filepath.Dir(gitdir),
+			WorktreeFolder: worktreeFolder,
+		}, true, nil
+	}
+
+	// Otherwise it's only a plain .git file and not a submodule
+	if gitdir != "" && !isSubmodule {
+		project := projectOrRemote(ctx, filepath.Base(worktreeFolder), g.ProjectFromGitRemote, gitdir)
+
+		branch, err := findGitBranch(ctx, filepath.Join(gitdir, "HEAD"))
+		if err != nil {
+			logger.Errorf(
+				"error finding branch from %q: %s",
+				filepath.Join(filepath.Dir(gitdir), "HEAD"),
+				err,
+			)
+		}
+
+		return Result{
+			Project:        project,
+			Branch:         branch,
+			Folder:         filepath.Join(gitdir, ".."),
+			WorktreeFolder: worktreeFolder,
 		}, true, nil
 	}
 
@@ -157,38 +151,6 @@ func (g Git) Detect(ctx context.Context) (Result, bool, error) {
 	}
 
 	return Result{}, false, nil
-}
-
-func findSubmodule(ctx context.Context, fp string, patterns []regex.Regex) (string, bool, error) {
-	if !shouldTakeSubmodule(ctx, fp, patterns) {
-		return "", false, nil
-	}
-
-	gitConfigFile, found := FindFileOrDirectory(ctx, fp, ".git")
-	if !found {
-		return "", false, nil
-	}
-
-	gitdir, err := findGitdir(ctx, gitConfigFile)
-	if err != nil {
-		return "", false,
-			fmt.Errorf("error finding gitdir for submodule: %s", err)
-	}
-
-	if !strings.Contains(gitdir, "modules") {
-		return "", false, nil
-	}
-
-	_, isWorktree, err := findCommondir(ctx, gitdir)
-	if err != nil {
-		return "", false, err
-	}
-
-	if isWorktree {
-		return "", false, nil
-	}
-
-	return gitdir, true, nil
 }
 
 // shouldTakeSubmodule checks a filepath against the passed in regex patterns to determine,

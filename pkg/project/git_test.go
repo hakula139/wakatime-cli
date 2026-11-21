@@ -121,20 +121,23 @@ func TestGit_Detect_GitConfigFile_File(t *testing.T) {
 	fp := setupTestGitFile(t)
 
 	tests := map[string]struct {
-		Filepath string
-		Project  string
+		Filepath       string
+		Project        string
+		WorktreeFolder string
 	}{
 		"main repo": {
 			Filepath: filepath.Join(fp, "wakatime-cli/src/pkg/file.go"),
 			Project:  "wakatime-cli",
 		},
 		"relative path": {
-			Filepath: filepath.Join(fp, "feed/src/pkg/file.go"),
-			Project:  "feed",
+			Filepath:       filepath.Join(fp, "feed/src/pkg/file.go"),
+			Project:        "feed",
+			WorktreeFolder: filepath.Join(fp, "feed"),
 		},
 		"absolute path": {
-			Filepath: filepath.Join(fp, "mobile/src/pkg/file.go"),
-			Project:  "mobile",
+			Filepath:       filepath.Join(fp, "mobile/src/pkg/file.go"),
+			Project:        "mobile",
+			WorktreeFolder: filepath.Join(fp, "mobile"),
 		},
 	}
 
@@ -150,9 +153,10 @@ func TestGit_Detect_GitConfigFile_File(t *testing.T) {
 			assert.True(t, detected)
 			assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
 			assert.Equal(t, project.Result{
-				Project: test.Project,
-				Branch:  "feature/list-elements",
-				Folder:  result.Folder,
+				Project:        test.Project,
+				Branch:         "feature/list-elements",
+				Folder:         result.Folder,
+				WorktreeFolder: test.WorktreeFolder,
 			}, result)
 		})
 	}
@@ -310,9 +314,10 @@ func TestGit_Detect_Submodule(t *testing.T) {
 	assert.True(t, detected)
 	assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
 	assert.Equal(t, project.Result{
-		Project: "billing",
-		Branch:  "master",
-		Folder:  result.Folder,
+		Project:        "billing",
+		Branch:         "master",
+		Folder:         result.Folder,
+		WorktreeFolder: filepath.Join(fp, "wakatime-cli", "lib", "billing"),
 	}, result)
 }
 
@@ -355,9 +360,10 @@ func TestGit_Detect_SubmoduleProjectMap_NotMatch(t *testing.T) {
 	assert.True(t, detected)
 	assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
 	assert.Equal(t, project.Result{
-		Project: "billing",
-		Branch:  "master",
-		Folder:  result.Folder,
+		Project:        "billing",
+		Branch:         "master",
+		Folder:         result.Folder,
+		WorktreeFolder: filepath.Join(fp, "wakatime-cli", "lib", "billing"),
 	}, result)
 }
 
@@ -380,9 +386,10 @@ func TestGit_Detect_SubmoduleProjectMap(t *testing.T) {
 	assert.True(t, detected)
 	assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
 	assert.Equal(t, project.Result{
-		Project: "my-project-1",
-		Branch:  "master",
-		Folder:  result.Folder,
+		Project:        "my-project-1",
+		Branch:         "master",
+		Folder:         result.Folder,
+		WorktreeFolder: filepath.Join(fp, "wakatime-cli", "lib", "billing"),
 	}, result)
 }
 
@@ -401,9 +408,10 @@ func TestGit_Detect_SubmoduleGitRemote(t *testing.T) {
 	assert.True(t, detected)
 	assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
 	assert.Equal(t, project.Result{
-		Project: "wakatime/billing",
-		Branch:  "master",
-		Folder:  result.Folder,
+		Project:        "wakatime/billing",
+		Branch:         "master",
+		Folder:         result.Folder,
+		WorktreeFolder: filepath.Join(fp, "wakatime-cli", "lib", "billing"),
 	}, result)
 }
 

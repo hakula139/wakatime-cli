@@ -356,7 +356,7 @@ func TestWithDetection_EntityWakatimeProjectTakesPrecedenceOverProjectPathOverri
 	require.NoError(t, err)
 }
 
-func TestWithDetection_LinkedWorktree(t *testing.T) {
+func TestWithDetection_GitCheckoutRoot(t *testing.T) {
 	fp := setupTestGitWorktree(t)
 	ctx := t.Context()
 	commonFolder := project.FormatProjectFolder(ctx, filepath.Join(fp, "wakatime-cli"))
@@ -366,6 +366,11 @@ func TestWithDetection_LinkedWorktree(t *testing.T) {
 
 	require.NoError(t, os.Mkdir(sibling, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(sibling, "file.go"), nil, 0600))
+
+	separateGit := setupTestGitFile(t)
+	separateCheckout := filepath.Join(separateGit, "mobile")
+	submoduleRepo := filepath.Join(setupTestGitSubmodule(t), "wakatime-cli")
+	submoduleCheckout := filepath.Join(submoduleRepo, "lib", "billing")
 
 	tests := []struct {
 		name            string
@@ -398,6 +403,20 @@ func TestWithDetection_LinkedWorktree(t *testing.T) {
 			project:         "explicit-name",
 			folder:          project.FormatProjectFolder(ctx, nested),
 			rootCount:       heartbeat.PointerTo(project.CountSlashesInProjectFolder(nested)),
+		},
+		{
+			name:      "separate Git directory",
+			entity:    filepath.Join(separateCheckout, "src", "pkg", "file.go"),
+			project:   "mobile",
+			folder:    project.FormatProjectFolder(ctx, filepath.Join(separateGit, "wakatime-cli")),
+			rootCount: heartbeat.PointerTo(project.CountSlashesInProjectFolder(separateCheckout)),
+		},
+		{
+			name:      "submodule",
+			entity:    filepath.Join(submoduleCheckout, "src", "lib", "lib.cpp"),
+			project:   "billing",
+			folder:    project.FormatProjectFolder(ctx, filepath.Join(submoduleRepo, ".git", "modules", "lib")),
+			rootCount: heartbeat.PointerTo(project.CountSlashesInProjectFolder(submoduleCheckout)),
 		},
 	}
 
