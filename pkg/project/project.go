@@ -103,6 +103,9 @@ type (
 		Project string
 		Branch  string
 		Folder  string
+
+		// WorktreeFolder locates files in a linked checkout when Folder is the common repository.
+		WorktreeFolder string
 	}
 
 	// Config contains project detection configurations.
@@ -187,7 +190,10 @@ func WithDetection(config Config) heartbeat.HandleOption {
 					}
 
 					result.Branch = firstNonEmptyString(result.Branch, revControlResult.Branch)
-					result.Folder = firstNonEmptyString(result.Folder, revControlResult.Folder)
+					if result.Folder == "" {
+						result.Folder = revControlResult.Folder
+						result.WorktreeFolder = revControlResult.WorktreeFolder
+					}
 				}
 
 				folder := h.ProjectPathOverride
@@ -236,9 +242,14 @@ func WithDetection(config Config) heartbeat.HandleOption {
 
 				result.Folder = FormatProjectFolder(ctx, result.Folder)
 
-				// Count total subfolders in project's path
-				if result.Folder != "" && strings.HasPrefix(h.Entity, result.Folder) {
-					subfolders := CountSlashesInProjectFolder(result.Folder)
+				rootFolder := result.Folder
+				if result.WorktreeFolder != "" {
+					rootFolder = FormatProjectFolder(ctx, result.WorktreeFolder)
+				}
+
+				// Count total subfolders in the project path that contains the file.
+				if rootFolder != "" && strings.HasPrefix(h.Entity, strings.TrimSuffix(rootFolder, "/")+"/") {
+					subfolders := CountSlashesInProjectFolder(rootFolder)
 					if subfolders > 0 {
 						hh[n].ProjectRootCount = &subfolders
 					}
@@ -331,11 +342,7 @@ func DetectWithRevControl(
 			}
 
 			if detected {
-				return Result{
-					Project: result.Project,
-					Branch:  result.Branch,
-					Folder:  result.Folder,
-				}
+				return result
 			}
 		}
 	}

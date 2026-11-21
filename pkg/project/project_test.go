@@ -356,6 +356,76 @@ func TestWithDetection_EntityWakatimeProjectTakesPrecedenceOverProjectPathOverri
 	require.NoError(t, err)
 }
 
+func TestWithDetection_LinkedWorktree(t *testing.T) {
+	fp := setupTestGitWorktree(t)
+	ctx := t.Context()
+	commonFolder := project.FormatProjectFolder(ctx, filepath.Join(fp, "wakatime-cli"))
+	worktree := filepath.Join(fp, "api")
+	nested := filepath.Join(worktree, "src")
+	sibling := filepath.Join(fp, "api-extra")
+
+	require.NoError(t, os.Mkdir(sibling, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(sibling, "file.go"), nil, 0600))
+
+	tests := []struct {
+		name            string
+		entity          string
+		override        string
+		projectOverride string
+		project         string
+		folder          string
+		rootCount       *int
+	}{
+		{
+			name:      "linked worktree file",
+			entity:    filepath.Join(nested, "pkg", "file.go"),
+			project:   "wakatime-cli",
+			folder:    commonFolder,
+			rootCount: heartbeat.PointerTo(project.CountSlashesInProjectFolder(worktree)),
+		},
+		{
+			name:     "sibling attributed to the worktree",
+			entity:   filepath.Join(sibling, "file.go"),
+			override: worktree,
+			project:  "wakatime-cli",
+			folder:   commonFolder,
+		},
+		{
+			name:            "explicit project folder",
+			entity:          filepath.Join(nested, "pkg", "file.go"),
+			override:        nested,
+			projectOverride: "explicit-name",
+			project:         "explicit-name",
+			folder:          project.FormatProjectFolder(ctx, nested),
+			rootCount:       heartbeat.PointerTo(project.CountSlashesInProjectFolder(nested)),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handle := project.WithDetection(project.Config{})(func(
+				_ context.Context,
+				hh []heartbeat.Heartbeat,
+			) ([]heartbeat.Result, error) {
+				require.Len(t, hh, 1)
+				assert.Equal(t, heartbeat.PointerTo(tt.project), hh[0].Project)
+				assert.Equal(t, tt.folder, hh[0].ProjectPath)
+				assert.Equal(t, tt.rootCount, hh[0].ProjectRootCount)
+
+				return nil, nil
+			})
+
+			_, err := handle(t.Context(), []heartbeat.Heartbeat{{
+				Entity:              windows.FormatFilePath(tt.entity),
+				EntityType:          heartbeat.FileType,
+				ProjectOverride:     tt.projectOverride,
+				ProjectPathOverride: tt.override,
+			}})
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestWithDetection_NoneDetected(t *testing.T) {
 	tmpFile, err := os.CreateTemp(t.TempDir(), "")
 	require.NoError(t, err)

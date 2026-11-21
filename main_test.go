@@ -2306,10 +2306,14 @@ func TestVersion(t *testing.T) {
 }
 
 func TestVersionVerbose(t *testing.T) {
+	commit, err := exec.CommandContext(t.Context(), "git", "rev-parse", "--short", "HEAD").Output()
+	require.NoError(t, err)
+
 	out := runWakatimeCli(t, &bytes.Buffer{}, "--version", "--verbose")
 
 	assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(
-		"wakatime-cli\n  Version: <local-build>\n  Commit: [0-9a-f]{7}\n  Built: [0-9-:T]{19} UTC\n  OS/Arch: %s/%s\n",
+		"wakatime-cli\n  Version: <local-build>\n  Commit: %s\n  Built: [0-9-:T]{19} UTC\n  OS/Arch: %s/%s\n",
+		regexp.QuoteMeta(strings.TrimSpace(string(commit))),
 		runtime.GOOS,
 		runtime.GOARCH,
 	)), out)

@@ -104,9 +104,10 @@ func (g Git) Detect(ctx context.Context) (Result, bool, error) {
 		}
 
 		return Result{
-			Project: project,
-			Branch:  branch,
-			Folder:  dir,
+			Project:        project,
+			Branch:         branch,
+			Folder:         dir,
+			WorktreeFolder: filepath.Dir(dotGit),
 		}, true, nil
 	}
 

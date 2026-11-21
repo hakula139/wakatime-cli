@@ -192,11 +192,11 @@ func TestGit_Detect_Worktree(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, detected)
-	assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
 	assert.Equal(t, project.Result{
-		Project: "wakatime-cli",
-		Branch:  "feature/api",
-		Folder:  result.Folder,
+		Project:        "wakatime-cli",
+		Branch:         "feature/api",
+		Folder:         filepath.Join(fp, "wakatime-cli"),
+		WorktreeFolder: filepath.Join(fp, "api"),
 	}, result)
 }
 
@@ -218,9 +218,10 @@ func TestGit_Detect_Worktree_ModulesPath(t *testing.T) {
 
 	assert.True(t, detected)
 	assert.Equal(t, project.Result{
-		Project: "wakatime-cli",
-		Branch:  "feature/api",
-		Folder:  projectDir,
+		Project:        "wakatime-cli",
+		Branch:         "feature/api",
+		Folder:         projectDir,
+		WorktreeFolder: filepath.Join(fp, "api"),
 	}, result)
 }
 
@@ -236,11 +237,11 @@ func TestGit_Detect_WorktreeGitRemote(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, detected)
-	assert.Contains(t, result.Folder, filepath.Join(fp, "wakatime-cli"))
 	assert.Equal(t, project.Result{
-		Project: "wakatime/wakatime-cli",
-		Branch:  "feature/api",
-		Folder:  result.Folder,
+		Project:        "wakatime/wakatime-cli",
+		Branch:         "feature/api",
+		Folder:         filepath.Join(fp, "wakatime-cli"),
+		WorktreeFolder: filepath.Join(fp, "api"),
 	}, result)
 }
 
@@ -266,9 +267,10 @@ func TestGit_Detect_Worktree_BareRepo(t *testing.T) {
 
 			assert.True(t, detected)
 			assert.Equal(t, project.Result{
-				Project: "wakatime-cli",
-				Branch:  "feature/api",
-				Folder:  repoDir,
+				Project:        "wakatime-cli",
+				Branch:         "feature/api",
+				Folder:         repoDir,
+				WorktreeFolder: filepath.Join(repoDir, "master"),
 			}, result)
 		})
 	}
@@ -287,9 +289,10 @@ func TestGit_Detect_WorktreeGitRemote_BareRepo(t *testing.T) {
 
 	assert.True(t, detected)
 	assert.Equal(t, project.Result{
-		Project: "wakatime/wakatime-cli",
-		Branch:  "feature/api",
-		Folder:  repoDir,
+		Project:        "wakatime/wakatime-cli",
+		Branch:         "feature/api",
+		Folder:         repoDir,
+		WorktreeFolder: filepath.Join(repoDir, "master"),
 	}, result)
 }
 
