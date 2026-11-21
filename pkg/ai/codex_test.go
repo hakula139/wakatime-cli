@@ -1131,6 +1131,10 @@ func TestCodexParse_PatchProjectFallsBackToTurnContextCwd(t *testing.T) {
 
 	notePath := filepath.Join(root, "notes", "plan.md")
 	otherPath := filepath.Join(other, "demo.txt")
+	require.NoError(t, os.Mkdir(filepath.Dir(notePath), 0o755))
+	require.NoError(t, os.WriteFile(notePath, []byte("plan"), 0o644))
+	require.NoError(t, os.WriteFile(otherPath, []byte("hello"), 0o644))
+
 	patch := strings.Join([]string{
 		"*** Begin Patch",
 		"*** Add File: " + notePath,
@@ -1159,17 +1163,23 @@ func TestCodexParse_PatchProjectFallsBackToTurnContextCwd(t *testing.T) {
 		assert.Equal(t, worktree, h.ProjectPathOverride)
 	}
 
-	detect := project.WithDetection(project.Config{})(
+	sanitize := heartbeat.WithSanitization(heartbeat.SanitizeConfig{HideProjectFolder: true})(
 		func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 			require.NotNil(t, hh[0].Project)
 			assert.Equal(t, "active", *hh[0].Project)
+			assert.Equal(t, "plan.md", hh[0].Entity)
+			assert.Nil(t, hh[0].ProjectRootCount)
+
 			require.NotNil(t, hh[1].Project)
 			assert.Equal(t, "other", *hh[1].Project)
+			assert.Equal(t, "demo.txt", hh[1].Entity)
+			assert.Nil(t, hh[1].ProjectRootCount)
 
 			return nil, nil
 		},
 	)
-	_, err = detect(t.Context(), got)
+	detect := project.WithDetection(project.Config{})(sanitize)
+	_, err = heartbeat.WithFormatting()(detect)(t.Context(), got)
 	require.NoError(t, err)
 }
 
