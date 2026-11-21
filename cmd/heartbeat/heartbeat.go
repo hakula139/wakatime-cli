@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	apicmd "github.com/wakatime/wakatime-cli/cmd/api"
@@ -59,7 +60,7 @@ func Run(ctx context.Context, v *viper.Viper) (int, error) {
 				logger.Errorf("failed to save heartbeats to offline queue: %s", err)
 			}
 
-			return errauth.ExitCode(), fmt.Errorf("sending heartbeat(s) failed: %w", errauth)
+			return errauth.ExitCode(), fmt.Errorf("sending heartbeat(s) failed: %w", err)
 		}
 
 		var errwaka wakaerror.Error
@@ -265,7 +266,7 @@ func sendPreparedHeartbeats(
 	queueFilepath string,
 	heartbeats []heartbeat.Heartbeat,
 	paramsLoader func(context.Context, *viper.Viper, params.FlagReadOrder) (params.Params, error),
-) error {
+) (err error) {
 	logger := log.Extract(ctx)
 
 	heartbeats = renderUserAgents(ctx, heartbeats)
@@ -286,15 +287,9 @@ func sendPreparedHeartbeats(
 		logger.Errorf("failed to save rate limited heartbeats: %s", err)
 	}
 
-	var (
-		chOfflineSave = make(chan bool)
-		savedOffline  bool
-	)
-
-	if len(heartbeats) > offline.SendLimit {
-		savedOffline = true
-
+	if !params.Offline.Disabled && len(heartbeats) > offline.SendLimit {
 		extraHeartbeats := heartbeats[offline.SendLimit:]
+		heartbeats = heartbeats[:offline.SendLimit]
 
 		logger.Debugf("save %d extra heartbeat(s) to offline queue", len(extraHeartbeats))
 
@@ -303,29 +298,29 @@ func sendPreparedHeartbeats(
 		offlineLogger := *logger
 		offlineCtx := log.ToContext(ctx, &offlineLogger)
 
-		go func(done chan<- bool) {
-			err := offlinecmd.SaveHeartbeatsWithParams(offlineCtx, v, queueFilepath, extraHeartbeats, params)
-			if err != nil {
-				offlineLogger.Errorf("failed to save extra heartbeats to offline queue: %s", err)
+		saved := make(chan error, 1)
+		go func() {
+			saved <- offlinecmd.SaveHeartbeatsWithParams(offlineCtx, v, queueFilepath, extraHeartbeats, params)
+		}()
+
+		defer func() {
+			if saveErr := <-saved; saveErr != nil {
+				err = errors.Join(err, fmt.Errorf("failed to save extra heartbeats to offline queue: %w", saveErr))
 			}
-
-			done <- true
-		}(chOfflineSave)
-
-		heartbeats = heartbeats[:offline.SendLimit]
+		}()
 	}
 
 	sender, err := buildHandle(ctx, v, params, queueFilepath)
 	if err != nil {
-		if err := offlinecmd.SaveHeartbeatsWithParams(ctx, v, queueFilepath, heartbeats, params); err != nil {
-			logger.Errorf("failed to save extra heartbeats to offline queue: %s", err)
+		err = fmt.Errorf("failed to initialize api client: %w", err)
+
+		if !params.Offline.Disabled {
+			if saveErr := offlinecmd.SaveHeartbeatsWithParams(ctx, v, queueFilepath, heartbeats, params); saveErr != nil {
+				err = errors.Join(err, fmt.Errorf("failed to save heartbeats to offline queue: %w", saveErr))
+			}
 		}
 
-		if savedOffline {
-			<-chOfflineSave
-		}
-
-		return fmt.Errorf("failed to initialize api client: %w", err)
+		return err
 	}
 
 	handle := handler.New(v, handler.Config{
@@ -334,19 +329,16 @@ func sendPreparedHeartbeats(
 		Opts:         initHandleOptions(),
 	})(sender)
 
-	results, err := handle(ctx, heartbeats)
+	for batch := range slices.Chunk(heartbeats, offline.SendLimit) {
+		results, err := handle(ctx, batch)
+		if err != nil {
+			return err
+		}
 
-	if savedOffline {
-		<-chOfflineSave
-	}
-
-	if err != nil {
-		return err
-	}
-
-	for _, result := range results {
-		if len(result.Errors) > 0 {
-			logger.Warnln(strings.Join(result.Errors, " "))
+		for _, result := range results {
+			if len(result.Errors) > 0 {
+				logger.Warnln(strings.Join(result.Errors, " "))
+			}
 		}
 	}
 

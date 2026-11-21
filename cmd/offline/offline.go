@@ -26,12 +26,12 @@ func SaveHeartbeats(
 	queueFilepath string,
 	heartbeats []heartbeat.Heartbeat,
 ) error {
-	params, err := loadParams(ctx, v, params.FlagReadOrderFlagPrecedence)
+	loaded, err := loadParams(ctx, v, params.FlagReadOrderFlagPrecedence, params.LoadHeartbeatParams)
 	if err != nil {
 		return fmt.Errorf("failed to load command parameters: %w", err)
 	}
 
-	return saveHeartbeats(ctx, v, queueFilepath, heartbeats, params)
+	return saveHeartbeats(ctx, v, queueFilepath, heartbeats, loaded)
 }
 
 // SaveHeartbeatsWithParams saves heartbeats to the offline db using already loaded command params.
@@ -50,14 +50,14 @@ func saveHeartbeats(
 	v *viper.Viper,
 	queueFilepath string,
 	heartbeats []heartbeat.Heartbeat,
-	params params.Params,
+	loaded params.Params,
 ) error {
 	logger := log.Extract(ctx)
 
-	setLogFields(ctx, params)
-	logger.Debugf("params: %s", params)
+	setLogFields(ctx, loaded)
+	logger.Debugf("params: %s", loaded)
 
-	if params.Offline.Disabled {
+	if loaded.Offline.Disabled {
 		return errors.New("saving to offline db disabled")
 	}
 
@@ -72,9 +72,11 @@ func saveHeartbeats(
 		offline.WithQueue(queueFilepath),
 	)
 	handle := handler.New(v, handler.Config{
-		Params:       params,
-		ParamsLoader: loadParams,
-		Opts:         handleOpts,
+		Params: loaded,
+		ParamsLoader: func(ctx context.Context, v *viper.Viper, order params.FlagReadOrder) (params.Params, error) {
+			return loadParams(ctx, v, order, params.LoadHeartbeatProcessingParams)
+		},
+		Opts: handleOpts,
 	})(sender)
 
 	_, err := handle(ctx, heartbeats)
@@ -107,6 +109,7 @@ func loadParams(
 	ctx context.Context,
 	v *viper.Viper,
 	order params.FlagReadOrder,
+	loadHeartbeatParams func(context.Context, *viper.Viper, params.FlagReadOrder) (params.Heartbeat, error),
 ) (params.Params, error) {
 	if v == nil {
 		return params.Params{}, errors.New("viper instance unset")
@@ -120,9 +123,9 @@ func loadParams(
 		return params.Params{}, fmt.Errorf("failed to load ai params: %w", err)
 	}
 
-	heartbeatParams, err := params.LoadHeartbeatParams(ctx, v, order)
+	heartbeatParams, err := loadHeartbeatParams(ctx, v, order)
 	if err != nil {
-		return params.Params{}, fmt.Errorf("failed to load heartbeat params: %s", err)
+		return params.Params{}, fmt.Errorf("failed to load heartbeat params: %w", err)
 	}
 
 	return params.Params{
