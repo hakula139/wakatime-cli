@@ -29,6 +29,7 @@ import (
 
 func TestRunCmd_RestoresLogOutput(t *testing.T) {
 	var output bytes.Buffer
+
 	logger := log.New(&output)
 	ctx := log.ToContext(t.Context(), logger)
 	v := viper.New()

@@ -522,7 +522,9 @@ func (g Codex) parseTranscriptFrom(ctx context.Context, transcript string, start
 		line, readErr := grokBuildReadJSONLLine(reader, maxTranscriptLineSize)
 		if errors.Is(readErr, errGrokBuildLineTooLong) {
 			state.pendingUserEnd = state.pendingUserStart
+
 			logger.Debugf("skipping oversized codex transcript line in %q", transcript)
+
 			continue
 		}
 
@@ -608,6 +610,7 @@ func (g Codex) handleTranscriptLine(
 	var logLine codexLogLine
 	if err := json.Unmarshal(line, &logLine); err != nil {
 		state.pendingUserEnd = state.pendingUserStart
+
 		logger.Warnf("failed parsing codex transcript line from %q: %s", transcript, err)
 		logger.Debugf("failed parsing codex transcript line: %s", line)
 

@@ -51,6 +51,7 @@ func TestWithDetection_FallbackPreservesHeartbeat(t *testing.T) {
 	require.NoError(t, err)
 
 	binDir := t.TempDir()
+
 	name := "scp"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
@@ -67,7 +68,9 @@ func TestWithDetection_FallbackPreservesHeartbeat(t *testing.T) {
 	require.NoError(t, listener.Close())
 
 	entity := "ssh://user:pass@" + address + "/home/u/src/example.go"
+
 	var localFile string
+
 	sender := mockSender{
 		SendHeartbeatsFn: func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 			require.Len(t, hh, 1)
@@ -88,6 +91,7 @@ func TestWithDetection_FallbackPreservesHeartbeat(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotEmpty(t, localFile)
+
 	cleanup := heartbeat.NewHandle(&mockSender{
 		SendHeartbeatsFn: func(context.Context, []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 			return nil, nil

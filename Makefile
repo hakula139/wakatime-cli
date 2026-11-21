@@ -23,13 +23,13 @@ GOGET=$(GOCMD) get
 GOLANGCI_LINT_VERSION?=v2.14.0
 INSTALLED_LINT_VERSION=$(shell golangci-lint --version 2>/dev/null | awk '{print "v"$$4}')
 
-# get GOPATH, GOOS and GOARCH according to OS
+GOPATH=$(shell $(GOCMD) env GOPATH)
+
+# get GOOS and GOARCH according to OS
 ifeq ($(OS),Windows_NT) # is Windows_NT on XP, 2000, 7, Vista, 10...
-    GOPATH=$(go env GOPATH)
 	GOOS=$(shell cmd /c go env GOOS)
 	GOARCH=$(shell cmd /c go env GOARCH)
 else
-    GOPATH=$(shell go env GOPATH)
 	GOOS=$(shell go env GOOS)
 	GOARCH=$(shell go env GOARCH)
 endif
@@ -138,7 +138,7 @@ install: install-go-modules install-linter
 install-linter:
 ifneq "$(INSTALLED_LINT_VERSION)" "$(GOLANGCI_LINT_VERSION)"
 	@echo "installing golangci-lint version:" $(GOLANGCI_LINT_VERSION)
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin $(GOLANGCI_LINT_VERSION)
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(GOPATH)/bin" $(GOLANGCI_LINT_VERSION)
 endif
 
 .PHONY: install-go-modules
