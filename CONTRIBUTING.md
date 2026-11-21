@@ -28,7 +28,7 @@ Initialize the shell test dependencies with `git submodule update --init --recur
 
 ## Pull Requests
 
-- Discuss API changes and backward-compatibility tradeoffs in a fork issue before implementing them. Search the fork's [issues](https://github.com/hakula139/wakatime-cli/issues) and [pull requests](https://github.com/hakula139/wakatime-cli/pulls) for related work.
+- Discuss API changes and backward-compatibility tradeoffs in a fork issue before implementing them. Search the fork's [issues](https://github.com/hakulab/wakatime-cli/issues) and [pull requests](https://github.com/hakulab/wakatime-cli/pulls) for related work.
 - Code formatting should be consistent with the style used in the existing code.
 - Don't leave commented out code. A record of this code is already preserved in the commit history.
 - All commits must be atomic. This means that the commit completely accomplishes a single task. Each commit should result in fully functional code. Multiple tasks should not be combined in a single commit, but a single task should not be split over multiple commits (e.g. one commit per file modified is not a good practice). For more information see <http://www.freshconsulting.com/atomic-commits>.
