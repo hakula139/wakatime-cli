@@ -84,11 +84,23 @@ func TestGitRemoteHelperBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, remote)
 
-	require.NoError(t, os.WriteFile(configPath, []byte(strings.Join([]string{
-		"[remote \"origin\"]",
-		"\turl = https://user:example@%zz/owner/repo.git",
-	}, "\n")), 0600))
-	remote, err = findGitRemote(ctx, configPath)
-	require.EqualError(t, err, "invalid Git remote URL")
-	assert.Empty(t, remote)
+	invalidURLs := []struct {
+		name    string
+		value   string
+		message string
+	}{
+		{"malformed HTTPS", "https://user:example@%zz/owner/repo.git", "invalid Git remote URL"},
+		{"unterminated quote", `"https://user:example@example.org/owner/repo.git`, "invalid quoted Git remote URL"},
+	}
+
+	for _, test := range invalidURLs {
+		t.Run(test.name, func(t *testing.T) {
+			config := "[remote \"origin\"]\n\turl = " + test.value + "\n"
+			require.NoError(t, os.WriteFile(configPath, []byte(config), 0600))
+
+			remote, err := findGitRemote(ctx, configPath)
+			require.EqualError(t, err, test.message)
+			assert.Empty(t, remote)
+		})
+	}
 }

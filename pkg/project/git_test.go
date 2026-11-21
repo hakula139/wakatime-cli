@@ -49,6 +49,8 @@ func TestGit_Detect_GitRemote(t *testing.T) {
 		{"quoted HTTPS", `"https://user:example@example.org/owner/repo.git?key=example#example" ; comment`, "owner/repo"},
 		{"SSH with port", "ssh://git@example.org:2222/owner/repo.git", "owner/repo"},
 		{"Git with nested path", "git://example.org/group/team/repo.git", "group/team/repo"},
+		{"unquoted URL with quoted path", `git@example.org:owner/"repo.git"`, "wakatime-cli"},
+		{"quoted URL with unquoted suffix", `"git@example.org:owner/"repo.git`, "wakatime-cli"},
 		{"malformed HTTPS", "https://user:example@%zz/owner/repo.git", "wakatime-cli"},
 		{"local URL", "file:///repos/owner/repo.git", "wakatime-cli"},
 		{"local path with colon", "./repos:local/repo.git", "wakatime-cli"},
