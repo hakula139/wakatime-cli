@@ -126,6 +126,7 @@ func TestSyncOfflineActivityLegacy_RetainsUnconfirmedHeartbeats(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+
 		batches <- batch
 
 		w.WriteHeader(http.StatusCreated)
