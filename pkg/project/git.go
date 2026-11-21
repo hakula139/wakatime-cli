@@ -324,37 +324,63 @@ func findGitRemote(ctx context.Context, fp string) (string, error) {
 		return "", fmt.Errorf("failed while opening file %q: %s", fp, err)
 	}
 
-	for i, line := range lines {
-		if strings.Trim(line, "\n\r\t") != "[remote \"origin\"]" {
+	inOrigin := false
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if header, ok := strings.CutPrefix(line, "["); ok {
+			section, _, closed := strings.Cut(header, "]")
+			parts := strings.Fields(section)
+			inOrigin = closed && len(parts) == 2 && strings.EqualFold(parts[0], "remote") && parts[1] == `"origin"`
+
 			continue
 		}
 
-		for _, subline := range lines[i+1:] {
-			subline = strings.TrimSpace(subline)
-			if strings.HasPrefix(subline, "[") {
-				break
+		if !inOrigin {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "url") {
+			remote, err := gitConfigRemoteValue(strings.TrimSpace(value))
+			if err != nil {
+				return "", err
 			}
 
-			key, value, ok := strings.Cut(subline, "=")
-			if ok && strings.TrimSpace(key) == "url" {
-				return gitRemoteProject(strings.TrimSpace(value))
-			}
+			return gitRemoteProject(remote)
 		}
 	}
 
 	return "", nil
 }
 
-func gitRemoteProject(remote string) (string, error) {
-	if strings.HasPrefix(remote, `"`) {
-		value, err := strconv.Unquote(remote)
-		if err != nil {
-			return "", errors.New("invalid quoted Git remote URL")
+func gitConfigRemoteValue(value string) (string, error) {
+	if !strings.HasPrefix(value, `"`) {
+		if end := strings.IndexAny(value, "#;"); end >= 0 {
+			value = value[:end]
 		}
 
-		remote = value
+		if strings.ContainsRune(value, '"') {
+			return "", nil
+		}
+
+		return strings.TrimSpace(value), nil
 	}
 
+	quoted, err := strconv.QuotedPrefix(value)
+	if err != nil {
+		return "", errors.New("invalid quoted Git remote URL")
+	}
+
+	tail := strings.TrimSpace(value[len(quoted):])
+	if tail != "" && strings.IndexAny(tail, "#;") != 0 {
+		return "", nil
+	}
+
+	return strconv.Unquote(quoted)
+}
+
+func gitRemoteProject(remote string) (string, error) {
 	host, path, ok := strings.Cut(remote, ":")
 	if !ok || host == "" || strings.ContainsAny(host, `/\`) || filepath.VolumeName(remote) != "" {
 		return "", nil

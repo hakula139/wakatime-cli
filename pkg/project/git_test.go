@@ -43,9 +43,10 @@ func TestGit_Detect_GitRemote(t *testing.T) {
 		project string
 	}{
 		{"SCP with trailing spaces", "git@example.org:owner/repo.git  ", "owner/repo"},
+		{"SCP with inline comment", "git@example.org:owner/repo.git # comment", "owner/repo"},
 		{"SCP without user", "example.org:owner/repo.git", "owner/repo"},
 		{"SCP with IPv6", "git@[2001:db8::1]:owner/repo.git", "owner/repo"},
-		{"quoted HTTPS", `"https://user:example@example.org/owner/repo.git?key=example#example"`, "owner/repo"},
+		{"quoted HTTPS", `"https://user:example@example.org/owner/repo.git?key=example#example" ; comment`, "owner/repo"},
 		{"SSH with port", "ssh://git@example.org:2222/owner/repo.git", "owner/repo"},
 		{"Git with nested path", "git://example.org/group/team/repo.git", "group/team/repo"},
 		{"malformed HTTPS", "https://user:example@%zz/owner/repo.git", "wakatime-cli"},

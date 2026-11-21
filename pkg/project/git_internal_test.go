@@ -63,15 +63,18 @@ func TestGitRemoteHelperBranches(t *testing.T) {
 	configPath := filepath.Join(root, ".git", "config")
 	require.NoError(t, os.MkdirAll(filepath.Dir(configPath), 0700))
 	require.NoError(t, os.WriteFile(configPath, []byte(strings.Join([]string{
-		"[remote \"origin\"]",
-		"	url = git@github.com:wakatime/wakatime-cli.git",
+		"[remote \"ORIGIN\"]",
+		"\turl = git@example.org:other/repo.git",
+		"[REMOTE \"origin\"] ; comment",
+		"\tURL = git@example.org:owner/repo.git",
+		"\turl = git@example.org:other/repo.git",
 		"[branch \"main\"]",
 	}, "\n")), 0600))
 
 	remote, err := findGitRemote(ctx, configPath)
 	require.NoError(t, err)
-	assert.Equal(t, "wakatime/wakatime-cli", remote)
-	assert.Equal(t, "wakatime/wakatime-cli", projectOrRemote(ctx, "project", true, filepath.Dir(configPath)))
+	assert.Equal(t, "owner/repo", remote)
+	assert.Equal(t, "owner/repo", projectOrRemote(ctx, "project", true, filepath.Dir(configPath)))
 
 	require.NoError(t, os.WriteFile(configPath, []byte(strings.Join([]string{
 		"[remote \"origin\"]",
