@@ -58,21 +58,25 @@ type (
 func WithReplacing(config Config) heartbeat.HandleOption {
 	return func(next heartbeat.Handle) heartbeat.Handle {
 		return func(ctx context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
-			// logger.Debugln("execute api key replacing")
-			var result []heartbeat.Heartbeat
-
-			for _, h := range hh {
-				for dest := range config.destinations(ctx, h.Entity) {
-					copy := h
-					copy.APIURL = dest.url
-					copy.APIKey = dest.key
-					result = append(result, copy)
-				}
-			}
-
-			return next(ctx, result)
+			return next(ctx, config.Apply(ctx, hh))
 		}
 	}
+}
+
+// Apply makes one heartbeat copy for each selected API destination.
+func (config Config) Apply(ctx context.Context, hh []heartbeat.Heartbeat) []heartbeat.Heartbeat {
+	var result []heartbeat.Heartbeat
+
+	for _, h := range hh {
+		for dest := range config.destinations(ctx, h.Entity) {
+			copy := h
+			copy.APIURL = dest.url
+			copy.APIKey = dest.key
+			result = append(result, copy)
+		}
+	}
+
+	return result
 }
 
 // CanReplay reports whether one stored heartbeat would recover exactly the selected destinations.

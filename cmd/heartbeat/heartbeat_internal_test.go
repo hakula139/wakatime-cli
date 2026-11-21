@@ -465,8 +465,9 @@ func TestSendPreparedHeartbeatsDoesNotQueueUnreplayableProjectRoutes(t *testing.
 
 func TestOfflineHeartbeatMirrorRouting(t *testing.T) {
 	const (
-		primaryKey = "00000000-0000-4000-8000-000000000000"
-		mirrorKey  = "00000000-0000-4000-8000-000000000001"
+		primaryKey     = "00000000-0000-4000-8000-000000000000"
+		mirrorKey      = "00000000-0000-4000-8000-000000000001"
+		missingReceipt = -1
 	)
 
 	h := internalProjectHeartbeat(t, []byte("[projectmap]\nmain[.]go = mirrored\n"))
@@ -486,12 +487,14 @@ func TestOfflineHeartbeatMirrorRouting(t *testing.T) {
 			assert.Equal(t, heartbeatpkg.PointerTo("mirrored"), sent[0].Project)
 			received.Add(1)
 
-			if status.Load() == http.StatusUnauthorized {
+			switch status.Load() {
+			case http.StatusUnauthorized:
 				w.WriteHeader(http.StatusUnauthorized)
-				return
+			case missingReceipt:
+				writeHeartbeatResults(t, w, 0, http.StatusCreated)
+			default:
+				writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
 			}
-
-			writeHeartbeatResults(t, w, len(sent), http.StatusCreated)
 		}))
 	}
 
@@ -532,18 +535,22 @@ func TestOfflineHeartbeatMirrorRouting(t *testing.T) {
 	assert.EqualValues(t, 1, primary.Load())
 	assert.EqualValues(t, 1, mirror.Load())
 
+	// API destination groups are sent in URL order.
+	secondStatus := &primaryStatus
+	if primaryAPI.URL < mirrorAPI.URL {
+		secondStatus = &mirrorStatus
+	}
+
 	t.Run("authentication failure after confirmed sibling", func(t *testing.T) {
-		if primaryAPI.URL < mirrorAPI.URL {
-			mirrorStatus.Store(http.StatusUnauthorized)
-		} else {
-			primaryStatus.Store(http.StatusUnauthorized)
-		}
+		secondStatus.Store(http.StatusUnauthorized)
+		t.Cleanup(func() { secondStatus.Store(0) })
 
 		v.Set("entity", h.Entity)
 		v.Set("entity-type", "file")
 		v.Set("time", h.Time)
 		v.Set("sync-ai-disabled", true)
 		v.Set("offline-queue-file", queueFile)
+		t.Cleanup(func() { v.Set("sync-ai-disabled", false) })
 
 		code, err := Run(t.Context(), v)
 		require.ErrorIs(t, err, offlinepkg.ErrUnreplayableRoute)
@@ -557,6 +564,60 @@ func TestOfflineHeartbeatMirrorRouting(t *testing.T) {
 		count, err := offlinepkg.CountHeartbeats(t.Context(), queueFile)
 		require.NoError(t, err)
 		assert.Zero(t, count)
+	})
+
+	for _, tt := range []struct {
+		name   string
+		status int32
+	}{
+		{name: "unconfirmed sync destination", status: missingReceipt},
+		{name: "unauthorized sync destination", status: http.StatusUnauthorized},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			primaryBefore, mirrorBefore := primary.Load(), mirror.Load()
+
+			secondStatus.Store(tt.status)
+			t.Cleanup(func() { secondStatus.Store(0) })
+
+			err := sendPreparedHeartbeats(t.Context(), v, loaded, queueFile, []heartbeatpkg.Heartbeat{h}, loadAISyncParams)
+			require.NoError(t, err)
+
+			err = offlinesync.SyncOfflineActivity(t.Context(), v, queueFile)
+			require.ErrorIs(t, err, offlinepkg.ErrUnreplayableRoute)
+
+			if tt.status == http.StatusUnauthorized {
+				var authErr api.ErrAuth
+				assert.ErrorAs(t, err, &authErr)
+			}
+
+			assert.Equal(t, primaryBefore+1, primary.Load())
+			assert.Equal(t, mirrorBefore+1, mirror.Load())
+
+			secondStatus.Store(0)
+
+			require.NoError(t, offlinesync.SyncOfflineActivity(t.Context(), v, queueFile))
+			assert.Equal(t, primaryBefore+1, primary.Load())
+			assert.Equal(t, mirrorBefore+1, mirror.Load())
+		})
+	}
+
+	t.Run("active backoff stages unsent mirror", func(t *testing.T) {
+		primaryBefore, mirrorBefore := primary.Load(), mirror.Load()
+		loaded.Offline.LastSentAt = time.Time{}
+		loaded.API.BackoffAt = time.Now()
+		loaded.API.BackoffRetries = 1
+
+		err := sendPreparedHeartbeats(t.Context(), v, loaded, queueFile, []heartbeatpkg.Heartbeat{h}, loadAISyncParams)
+
+		var backoffErr api.ErrBackoff
+		require.ErrorAs(t, err, &backoffErr)
+		assert.NotErrorIs(t, err, offlinepkg.ErrUnreplayableRoute)
+		assert.Equal(t, primaryBefore, primary.Load())
+		assert.Equal(t, mirrorBefore, mirror.Load())
+
+		count, err := offlinepkg.CountHeartbeats(t.Context(), queueFile)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
 	})
 }
 

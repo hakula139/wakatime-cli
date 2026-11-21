@@ -10,7 +10,6 @@ import (
 	"time"
 
 	cmdapi "github.com/wakatime/wakatime-cli/cmd/api"
-	"github.com/wakatime/wakatime-cli/pkg/apikey"
 	"github.com/wakatime/wakatime-cli/pkg/exitcode"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/log"
@@ -124,8 +123,7 @@ func syncOfflineActivityLegacy(ctx context.Context, v *viper.Viper, queueFilepat
 	}
 
 	handle := heartbeat.NewHandle(apiClient,
-		offline.WithSync(queueFilepath, offlineParams.SyncMax),
-		apikey.WithReplacing(apiParams.Routing()),
+		offline.WithSync(queueFilepath, offlineParams.SyncMax, apiParams.Routing()),
 	)
 
 	_, err = handle(ctx, nil)
@@ -200,8 +198,7 @@ func SyncOfflineActivity(ctx context.Context, v *viper.Viper, queueFilepath stri
 	}
 
 	handle := heartbeat.NewHandle(apiClient,
-		offline.WithSync(queueFilepath, offlineParams.SyncMax),
-		apikey.WithReplacing(apiParams.Routing()),
+		offline.WithSync(queueFilepath, offlineParams.SyncMax, apiParams.Routing()),
 	)
 
 	_, err = handle(ctx, nil)

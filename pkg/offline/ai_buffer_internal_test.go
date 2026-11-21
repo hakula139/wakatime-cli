@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wakatime/wakatime-cli/pkg/apikey"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	bolt "go.etcd.io/bbolt"
 )
@@ -60,7 +61,7 @@ func TestAIBufferingSurvivesRestartAndDrainsWithoutNewActivity(t *testing.T) {
 
 				var sent []heartbeat.Heartbeat
 
-				require.NoError(t, Sync(t.Context(), path, 100)(func(
+				require.NoError(t, Sync(t.Context(), path, 100, apikey.Config{})(func(
 					_ context.Context,
 					hh []heartbeat.Heartbeat,
 				) ([]heartbeat.Result, error) {
@@ -183,7 +184,7 @@ func TestAIBufferingRetriesReadyRecordsWithoutBufferingThemAgain(t *testing.T) {
 
 		var failed heartbeat.Heartbeat
 
-		require.NoError(t, Sync(t.Context(), path, 100)(func(
+		require.NoError(t, Sync(t.Context(), path, 100, apikey.Config{})(func(
 			_ context.Context,
 			hh []heartbeat.Heartbeat,
 		) ([]heartbeat.Result, error) {
@@ -209,7 +210,7 @@ func TestAIBufferingRetriesReadyRecordsWithoutBufferingThemAgain(t *testing.T) {
 
 		var retried []heartbeat.Heartbeat
 
-		require.NoError(t, Sync(t.Context(), path, 100)(func(
+		require.NoError(t, Sync(t.Context(), path, 100, apikey.Config{})(func(
 			_ context.Context,
 			hh []heartbeat.Heartbeat,
 		) ([]heartbeat.Result, error) {

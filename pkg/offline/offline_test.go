@@ -536,7 +536,7 @@ func TestWithSync(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	opt := offline.WithSync(f.Name(), offline.SyncMaxDefault)
+	opt := offline.WithSync(f.Name(), offline.SyncMaxDefault, apikey.Config{})
 
 	handle := opt(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		return []heartbeat.Result{
@@ -585,7 +585,8 @@ func TestWithSync(t *testing.T) {
 }
 
 func TestWithSync_OpenError(t *testing.T) {
-	handle := offline.WithSync(t.TempDir(), 1)(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
+	sync := offline.WithSync(t.TempDir(), 1, apikey.Config{})
+	handle := sync(func(_ context.Context, _ []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 		t.Fatal("next handler should not be called")
 
 		return nil, nil
@@ -615,7 +616,7 @@ func TestSync_RequeuesOnHandlerError(t *testing.T) {
 	}})
 	require.NoError(t, db.Close())
 
-	err = offline.Sync(t.Context(), f.Name(), 1)(
+	err = offline.Sync(t.Context(), f.Name(), 1, apikey.Config{})(
 		func(_ context.Context, hh []heartbeat.Heartbeat) ([]heartbeat.Result, error) {
 			require.Len(t, hh, 1)
 
@@ -661,7 +662,7 @@ func TestSync_MultipleRequests(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 1000)
+	syncFn := offline.Sync(t.Context(), f.Name(), 1000, apikey.Config{})
 
 	var numCalls int
 
@@ -748,7 +749,7 @@ func TestSync_APIError(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 3)
+	syncFn := offline.Sync(t.Context(), f.Name(), 3, apikey.Config{})
 
 	var numCalls int
 
@@ -836,7 +837,7 @@ func TestSync_APIErrorBulkNested(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 3)
+	syncFn := offline.Sync(t.Context(), f.Name(), 3, apikey.Config{})
 
 	var numCalls int
 
@@ -935,7 +936,7 @@ func TestSync_StopsOnInvalidResults(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 1000)
+	syncFn := offline.Sync(t.Context(), f.Name(), 1000, apikey.Config{})
 
 	var numCalls int
 
@@ -1030,7 +1031,7 @@ func TestSync_SyncLimit(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 1)
+	syncFn := offline.Sync(t.Context(), f.Name(), 1, apikey.Config{})
 
 	var numCalls int
 
@@ -1107,7 +1108,7 @@ func TestSync_SyncLimitAcrossMultipleBatches(t *testing.T) {
 
 	require.NoError(t, db.Close())
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 30)
+	syncFn := offline.Sync(t.Context(), f.Name(), 30, apikey.Config{})
 
 	var (
 		numCalls int
@@ -1190,7 +1191,7 @@ func TestSync_SyncUnlimited(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), math.MaxInt32)
+	syncFn := offline.Sync(t.Context(), f.Name(), math.MaxInt32, apikey.Config{})
 
 	var numCalls int
 
@@ -1292,7 +1293,7 @@ func TestSync_DeletesDuplicates(t *testing.T) {
 	err = db.Close()
 	require.NoError(t, err)
 
-	syncFn := offline.Sync(t.Context(), f.Name(), 5)
+	syncFn := offline.Sync(t.Context(), f.Name(), 5, apikey.Config{})
 
 	var (
 		numCalls  int
@@ -1374,7 +1375,7 @@ func TestSync_StopsOnMissingResults(t *testing.T) {
 
 			var requests int
 
-			err = offline.Sync(t.Context(), queuePath, 100)(func(
+			err = offline.Sync(t.Context(), queuePath, 100, apikey.Config{})(func(
 				_ context.Context,
 				batch []heartbeat.Heartbeat,
 			) ([]heartbeat.Result, error) {
