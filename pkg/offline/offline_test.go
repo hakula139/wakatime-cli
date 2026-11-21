@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/viper"
+	"github.com/wakatime/wakatime-cli/pkg/api"
 	"github.com/wakatime/wakatime-cli/pkg/apikey"
 	"github.com/wakatime/wakatime-cli/pkg/heartbeat"
 	"github.com/wakatime/wakatime-cli/pkg/ini"
@@ -238,6 +241,94 @@ func TestWithQueuePreservesTransportAndRoutingErrors(t *testing.T) {
 	require.ErrorIs(t, err, assert.AnError)
 	assert.ErrorIs(t, err, offline.ErrUnreplayableRoute)
 	assert.NoFileExists(t, path)
+}
+
+func TestSyncRetainsOtherDestinationAfterSurplusReceipts(t *testing.T) {
+	const (
+		primaryKey = "00000000-0000-4000-8000-000000000000"
+		otherKey   = "00000000-0000-4000-8000-000000000001"
+	)
+
+	var (
+		primaryCalls atomic.Int32
+		otherCalls   atomic.Int32
+		acceptOther  atomic.Bool
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var sent []heartbeat.Heartbeat
+		if !assert.NoError(t, json.NewDecoder(req.Body).Decode(&sent)) || !assert.Len(t, sent, 1) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		var receipts []json.RawMessage
+
+		switch sent[0].Entity {
+		case "primary.go":
+			primaryCalls.Add(1)
+
+			receipts = []json.RawMessage{
+				json.RawMessage(`[{"data":{"id":"primary"}},201]`),
+				json.RawMessage(`[{"data":{"id":"extra"}},201]`),
+			}
+		case "other.go":
+			otherCalls.Add(1)
+
+			if acceptOther.Load() {
+				receipts = []json.RawMessage{json.RawMessage(`[{"data":{"id":"other"}},201]`)}
+			}
+		default:
+			t.Errorf("unexpected request entity %q", sent[0].Entity)
+			w.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string][]json.RawMessage{"responses": receipts}))
+	}))
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "offline.bdb")
+	config := apikey.Config{
+		DefaultAPIURL: server.URL,
+		DefaultAPIKey: primaryKey,
+		MapPatterns: []apikey.MapPattern{
+			{APIKey: otherKey, Regex: regex.NewRegexpWrap(regexp.MustCompile(`^other[.]go$`))},
+		},
+	}
+	hh := config.Apply(t.Context(), []heartbeat.Heartbeat{
+		{Entity: "primary.go", Time: 1},
+		{Entity: "other.go", Time: 2},
+	})
+	_, err := offline.QueueUnsent(path, config)(t.Context(), hh)
+	require.NoError(t, err)
+
+	sync := offline.Sync(t.Context(), path, 10, config)
+	client := api.NewClient(server.URL)
+	err = sync(client.SendHeartbeats)
+
+	var apiErr api.Err
+	require.ErrorAs(t, err, &apiErr)
+	assert.ErrorContains(t, err, "received 2 heartbeat results, request batch size 1")
+	assert.EqualValues(t, 1, primaryCalls.Load())
+	assert.Zero(t, otherCalls.Load())
+
+	stored, err := offline.ReadHeartbeats(t.Context(), path, 10)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "other.go", stored[0].Entity)
+
+	acceptOther.Store(true)
+
+	require.NoError(t, sync(client.SendHeartbeats))
+	assert.EqualValues(t, 1, primaryCalls.Load())
+	assert.EqualValues(t, 1, otherCalls.Load())
+
+	count, err := offline.CountHeartbeats(t.Context(), path)
+	require.NoError(t, err)
+	assert.Zero(t, count)
 }
 
 func TestWithQueue_NoHeartbeats(t *testing.T) {

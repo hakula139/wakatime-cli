@@ -50,15 +50,18 @@ func (c *Client) SendHeartbeats(ctx context.Context, heartbeats []heartbeat.Hear
 			return results, err
 		}
 
-		for i := range res {
-			if i >= len(hh) {
-				break
-			}
-
-			res[i].Heartbeat = hh[i]
+		matched := res[:min(len(res), len(hh))]
+		for i := range matched {
+			matched[i].Heartbeat = hh[i]
 		}
 
-		results = append(results, res...)
+		results = append(results, matched...)
+
+		if len(res) > len(hh) {
+			return results, Err{Err: fmt.Errorf(
+				"received %d heartbeat results, request batch size %d", len(res), len(hh),
+			)}
+		}
 	}
 
 	return results, nil

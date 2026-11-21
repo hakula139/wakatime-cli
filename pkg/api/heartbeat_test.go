@@ -97,12 +97,8 @@ func TestClient_SendHeartbeats_MultipleApiKey(t *testing.T) {
 			assert.Equal(t, []string{"Basic MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAx"}, req.Header["Authorization"])
 		}
 
-		// write response
-		f, err := os.Open("testdata/api_heartbeats_response.json")
-		require.NoError(t, err)
-
 		w.WriteHeader(http.StatusCreated)
-		_, err = io.Copy(w, f)
+		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"accepted"}},201]]}`)
 		require.NoError(t, err)
 	})
 
