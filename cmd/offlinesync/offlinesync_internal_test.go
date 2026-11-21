@@ -231,12 +231,11 @@ func TestSyncOfflineActivityLegacy_InvalidAPIKey(t *testing.T) {
 }
 
 func TestSyncOfflineActivityLegacy_InvalidQueuePath(t *testing.T) {
-	parentPath := filepath.Join(t.TempDir(), "existing-file")
-	require.NoError(t, os.WriteFile(parentPath, nil, 0600))
+	queuePath := filepath.Join(t.TempDir(), "legacy\x00.bdb")
 
-	err := syncOfflineActivityLegacy(t.Context(), viper.New(), filepath.Join(parentPath, "legacy.bdb"))
+	err := syncOfflineActivityLegacy(t.Context(), viper.New(), queuePath)
 
-	require.ErrorIs(t, err, syscall.ENOTDIR)
+	require.ErrorIs(t, err, syscall.EINVAL)
 	assert.ErrorContains(t, err, "failed to acquire legacy queue mutex")
 }
 
