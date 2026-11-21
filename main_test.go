@@ -1908,11 +1908,26 @@ func TestFileExperts(t *testing.T) {
 	apiURL, router, close := setupTestServer()
 	defer close()
 
-	projectFolder, err := filepath.Abs(".")
+	tmpDir := t.TempDir()
+	projectName := "app"
+	projectFolder := filepath.Join(tmpDir, "checkouts", projectName)
+	gitDir := filepath.Join(tmpDir, "node_modules-cache", "metadata")
+
+	require.NoError(t, os.MkdirAll(projectFolder, 0700))
+	require.NoError(t, os.MkdirAll(gitDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(projectFolder, ".git"), []byte("gitdir: "+gitDir+"\n"), 0600))
+
+	copyFile(t, "testdata/git_basic/config", filepath.Join(gitDir, "config"))
+	copyFile(t, "testdata/git_basic/HEAD", filepath.Join(gitDir, "HEAD"))
+
+	entity := filepath.Join(projectFolder, "main.go")
+	copyFile(t, "testdata/main.go", entity)
+
+	entityPath, err := realpath.Realpath(entity)
 	require.NoError(t, err)
 
-	subfolders := project.CountSlashesInProjectFolder(projectFolder)
-
+	entityPath = windows.FormatFilePath(entityPath)
+	subfolders := project.CountSlashesInProjectFolder(filepath.Dir(entityPath))
 	ctx := t.Context()
 
 	var numCalls int
@@ -1932,14 +1947,10 @@ func TestFileExperts(t *testing.T) {
 			expectedBodyTpl, err := os.ReadFile("testdata/api_file_experts_request_template.json")
 			require.NoError(t, err)
 
-			entityPath, err := realpath.Realpath("testdata/main.go")
-			require.NoError(t, err)
-
-			entityPath = strings.ReplaceAll(entityPath, `\`, `/`)
 			expectedBody := fmt.Sprintf(
 				string(expectedBodyTpl),
 				entityPath,
-				"wakatime-cli",
+				projectName,
 				subfolders,
 			)
 
@@ -1956,8 +1967,6 @@ func TestFileExperts(t *testing.T) {
 			_, err = io.Copy(w, f)
 			require.NoError(t, err)
 		})
-
-	tmpDir := t.TempDir()
 
 	tmpConfigFile, err := os.CreateTemp(tmpDir, "wakatime.cfg")
 	require.NoError(t, err)
@@ -1976,7 +1985,7 @@ func TestFileExperts(t *testing.T) {
 		"--key", "00000000-0000-4000-8000-000000000000",
 		"--config", tmpConfigFile.Name(),
 		"--internal-config", tmpInternalConfigFile.Name(),
-		"--entity", "testdata/main.go",
+		"--entity", entity,
 		"--file-experts",
 		"--verbose",
 		"--sync-ai-disabled",
@@ -2306,10 +2315,14 @@ func TestVersion(t *testing.T) {
 }
 
 func TestVersionVerbose(t *testing.T) {
+	commit, err := exec.CommandContext(t.Context(), "git", "rev-parse", "--short", "HEAD").Output()
+	require.NoError(t, err)
+
 	out := runWakatimeCli(t, &bytes.Buffer{}, "--version", "--verbose")
 
 	assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(
-		"wakatime-cli\n  Version: <local-build>\n  Commit: [0-9a-f]{7}\n  Built: [0-9-:T]{19} UTC\n  OS/Arch: %s/%s\n",
+		"wakatime-cli\n  Version: <local-build>\n  Commit: %s\n  Built: [0-9-:T]{19} UTC\n  OS/Arch: %s/%s\n",
+		regexp.QuoteMeta(strings.TrimSpace(string(commit))),
 		runtime.GOOS,
 		runtime.GOARCH,
 	)), out)
