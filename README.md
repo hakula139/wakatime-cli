@@ -1,7 +1,7 @@
 # WakaTime CLI
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/hakulab/wakatime-cli/on_push.yml?branch=develop&label=tests)](https://github.com/hakulab/wakatime-cli/actions/workflows/on_push.yml)
-[![Coverage](https://img.shields.io/codecov/c/gh/hakulab/wakatime-cli/develop)](https://codecov.io/gh/hakulab/wakatime-cli)
+[![Coverage](https://img.shields.io/codecov/c/gh/hakula139/wakatime-cli/develop)](https://codecov.io/gh/hakula139/wakatime-cli)
 [![Downloads](https://img.shields.io/github/downloads/hakulab/wakatime-cli/total?color=007ec6)](https://github.com/hakulab/wakatime-cli/releases)
 
 Command line interface to [WakaTime][wakatime] used by all WakaTime [text editor plugins][editors].
