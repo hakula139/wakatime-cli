@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -227,6 +228,55 @@ func TestSyncOfflineActivityLegacy_InvalidAPIKey(t *testing.T) {
 	after, err := os.ReadFile(f.Name())
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
+}
+
+func TestSyncOfflineActivityLegacy_InvalidQueuePath(t *testing.T) {
+	parentPath := filepath.Join(t.TempDir(), "existing-file")
+	require.NoError(t, os.WriteFile(parentPath, nil, 0600))
+
+	err := syncOfflineActivityLegacy(t.Context(), viper.New(), filepath.Join(parentPath, "legacy.bdb"))
+
+	require.ErrorIs(t, err, syscall.ENOTDIR)
+	assert.ErrorContains(t, err, "failed to acquire legacy queue mutex")
+}
+
+func TestSyncOfflineActivityLegacy_PreservesPathOnCountError(t *testing.T) {
+	queuePath := filepath.Join(t.TempDir(), "legacy.bdb")
+	backupPath := queuePath + ".backup"
+	db, err := bolt.Open(queuePath, 0600, nil)
+	require.NoError(t, err)
+	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
+		return offline.NewQueue(tx).PushMany([]heartbeat.Heartbeat{
+			{Entity: "/tmp/main.go", EntityType: heartbeat.FileType, Time: 1000},
+		})
+	}))
+	require.NoError(t, db.Close())
+
+	testServerURL, router, tearDown := setupTestServer()
+	defer tearDown()
+
+	router.HandleFunc("/users/current/heartbeats.bulk", func(w http.ResponseWriter, _ *http.Request) {
+		if !assert.NoError(t, os.Rename(queuePath, backupPath)) ||
+			!assert.NoError(t, os.Mkdir(queuePath, 0700)) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		_, err := io.WriteString(w, `{"responses":[[{"data":{"id":"accepted"}},201]]}`)
+		assert.NoError(t, err)
+	})
+
+	v := viper.New()
+	v.Set("api-url", testServerURL)
+	v.Set("key", "00000000-0000-4000-8000-000000000000")
+	v.Set("sync-offline-activity", 1)
+
+	err = syncOfflineActivityLegacy(t.Context(), v, queuePath)
+
+	require.ErrorContains(t, err, "failed to count remaining legacy heartbeats")
+	assert.DirExists(t, queuePath)
+	assert.FileExists(t, backupPath)
 }
 
 func setupTestServer() (string, *http.ServeMux, func()) {
